@@ -1,15 +1,10 @@
 # Ağ istekleri
 httpx[http2]>=0.27.0
 
-# Tarayıcı otomasyonu (yalnızca gerekirse)
-playwright>=1.42.0
-
 # HTML ayrıştırma
 selectolax>=0.3.21
-lxml>=5.1.0
 
 # PDF ve OCR
-pdfplumber>=0.11.0
 PyMuPDF>=1.24.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
@@ -18,17 +13,13 @@ opencv-python-headless>=4.9.0
 # Excel export
 openpyxl>=3.1.0
 
-# XBRL
-arelle-release>=2.20.0
-
 # Veri doğrulama, işleme ve saklama
 pydantic>=2.6.0
 polars>=1.0.0
 duckdb>=1.0.0
 pyarrow>=15.0.0
 
-# Zamanlama ve dayanıklılık
-apscheduler>=3.10.4,<4
+# Dayanıklılık ve ortam
 tenacity>=8.2.3
 python-dotenv>=1.0.1
 tqdm>=4.66.0

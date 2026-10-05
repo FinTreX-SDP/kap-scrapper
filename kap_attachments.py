@@ -27,8 +27,9 @@ from dotenv import load_dotenv
 from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
-from kap_disclosures import DB_PATH, HEADERS, REQUEST_DELAY, export_to_excel
+from kap_disclosures import HEADERS, REQUEST_DELAY
 from kap_http import RateLimited, kap_get
+from kap_output import DB_PATH, export_to_excel, write_detail_file
 
 load_dotenv(Path(__file__).parent / ".env")
 pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
@@ -215,6 +216,7 @@ def main() -> None:
             for disclosure_index, file_id, url in tqdm(todo, desc="Attachments"):
                 try:
                     save(con, disclosure_index, file_id, extract(kap_get(client, url)))
+                    write_detail_file(con, disclosure_index)
                     done += 1
                 except RateLimited:
                     raise

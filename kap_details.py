@@ -17,8 +17,9 @@ import polars as pl
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 from tqdm import tqdm
 
-from kap_disclosures import DB_PATH, DISCLOSURE_URL, HEADERS, REQUEST_DELAY, export_to_excel
+from kap_disclosures import DISCLOSURE_URL, HEADERS, REQUEST_DELAY
 from kap_http import RateLimited, kap_get
+from kap_output import DB_PATH, export_to_excel, write_detail_file
 
 ATTACHMENT_SELECTOR = 'a[href*="/api/file/download/"]'
 
@@ -167,6 +168,7 @@ def reparse_stored(con: duckdb.DuckDBPyConnection) -> int:
         except Exception:
             con.rollback()
             raise
+        write_detail_file(con, disclosure_index)
     return len(stored)
 
 
@@ -225,6 +227,7 @@ def main() -> None:
             for disclosure_index in tqdm(todo, desc="Details"):
                 try:
                     save(con, disclosure_index, parse_page(fetch_page(client, disclosure_index)))
+                    write_detail_file(con, disclosure_index)
                     done += 1
                 except RateLimited:
                     raise

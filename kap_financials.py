@@ -15,7 +15,7 @@ import duckdb
 import polars as pl
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
-from kap_disclosures import DB_PATH, export_to_excel
+from kap_output import DB_PATH, export_to_excel, write_detail_file
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS financial_items (
@@ -178,6 +178,7 @@ def main() -> None:
     for disclosure_index, html in con.execute(query).fetchall():
         items = parse_financials(html)
         save(con, disclosure_index, items)
+        write_detail_file(con, disclosure_index)
         print(f"{disclosure_index}: {len(items)} values")
     export_to_excel(con)
     con.close()

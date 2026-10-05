@@ -8,7 +8,7 @@ KAP'ta yayımlanan her yeni bildirimi saniyeler içinde yakalar ve içindeki her
 - ekteki PDF ve görsellerin metni ve tabloları, taranmış belgeler için OCR dahil,
 - finansal raporlardaki mali tablolar, dönemleriyle birlikte sayısal değerler olarak.
 
-Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bir Excel dosyası üretilir.
+Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bildirimleri listeleyen bir Excel özeti ve her bildirim için okunaklı bir detay dosyası üretilir.
 
 > **Resmî değildir.** Bu proje KAP veya MKK ile bağlantılı değildir. KAP web sitesinin kendisinin kullandığı iç uç noktaları okur. Bu uç noktalar belgelenmemiştir ve haber verilmeden değişebilir. İstek sıklığını düşük tutun ve KAP'ın kullanım koşullarına uyun.
 
@@ -34,7 +34,8 @@ flowchart LR
     details --> db[("DuckDB<br/>data/kap.duckdb")]
     att --> db
     fin --> db
-    db --> xlsx["Excel çıktısı<br/>data/disclosures.xlsx"]
+    db --> xlsx["Excel özeti<br/>data/disclosures.xlsx"]
+    db --> md["Detay dosyaları<br/>data/details/"]
 ```
 
 1. **Bildirim listesi.** KAP ana sayfasının attığı isteğin aynısı gönderilir:
@@ -134,7 +135,7 @@ Her yeni bildirim ekranda tek bir satır olarak görünür. Örnek çıktı, de�
 - **Neyi işler.** İzleyici başladıktan sonra yayımlanan bildirimleri ve başlangıçtan önceki 10 dakikayı işler. Böylece kısa bir yeniden başlatmada hiçbir şey kaçmaz. Daha eski bildirimler için toplu çalıştırma betiklerini kullanın.
 - **İş sırası.** Önce bildirim sayfası çekilip kaydedilir. Bildirim finansal raporsa mali tablolar da aynı anda çıkarılır. Ekler arka plandaki bir işçiye gider. Böylece uzun bir OCR işi bir sonraki bildirimi geciktirmez.
 - **Hatalar.** Alınamayan bir bildirim sayfası bir sonraki kontrolde yeniden denenir, en fazla 3 kez. Başarısız olan ekler, ek işçisi boştayken 5 dakikada bir yeniden kuyruğa alınır.
-- **Excel.** Yeni veri geldiğinde Excel dosyası yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
+- **Excel ve detay dosyaları.** Bildirimin detay dosyası sayfası kaydedilir kaydedilmez yazılır ve her ek işlendiğinde güncellenir. Excel özeti yeni veri geldiğinde yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
 - **Durdurma.** Ctrl+C'ye basın. Kuyrukta kalan ekler ekrana yazılır. Onları tamamlamak için `python kap_attachments.py` komutunu çalıştırın.
 
 İzleyici çalıştığı sürece veritabanını açık tutar. DuckDB buna aynı anda yalnızca tek bir sürecin izin verir. Toplu çalıştırma betiklerini başlatmadan ya da veritabanını başka bir yerden açmadan önce izleyiciyi durdurun.
@@ -157,6 +158,7 @@ Ayrıştırıcılar değiştiğinde, saklı sayfalar KAP'a gitmeden yeniden işl
 ```powershell
 python kap_details.py --reparse     # saklı tüm sayfaların alanları, tabloları ve metni
 python kap_financials.py --all      # tüm mali tablolar
+python kap_output.py                # Excel özeti ve tüm detay dosyaları
 ```
 
 Toplu çekme, KAP'ın istek sınırları yüzünden yavaştır. Binlerce bildirimin çekilmesi saatler sürebilir. Ayrıntılar için [KAP istek sınırları](#kap-istek-sınırları) bölümüne bakın.
@@ -189,21 +191,35 @@ Veriyle ilgili notlar:
 - **Özkaynak değişim tablosu.** `member` sütunu özkaynak kalemini tutar, toplam sütunu `Özkaynaklar`'dır. Her satır kendi grubunun dönemini taşır. Dönem başı ve dönem sonu bakiyelerini `Dönem Başı Bakiyeler` ve `Dönem Sonu Bakiyeler` etiketli satırlardan okuyun.
 - **Birleşik tablolar.** Bazı şirketler kâr veya zarar tablosu ile diğer kapsamlı gelir tablosunu tek tabloda verir: `Kar veya Zarar ve Diğer Kapsamlı Gelir Tablosu`.
 
-### Excel çıktısı
+### Excel özeti ve detay dosyaları
 
-`data/disclosures.xlsx` her betik çalıştığında, izleyicide ise her değişiklikten sonra yeniden yazılır. Her sayfada başlık satırı sabitlenmiştir ve filtreler açıktır.
+Bu iki çıktı göz atmak içindir. Tam kayıt her zaman veritabanındadır.
 
-| Sayfa | İçerik |
+**Excel özeti.** `data/disclosures.xlsx` dosyasında en yeni 5.000 bildirim, her biri tek satır olarak yer alır. Dosya her betik çalıştığında, izleyicide ise her değişiklikten sonra yeniden yazılır. Başlık satırı sabitlenmiştir ve filtreler açıktır.
+
+| Sütun | İçerik |
 |---|---|
-| Disclosures | Her bildirim bir satır. Detayı çekilmişse sayfa metni ve ek adları da yer alır |
-| Details | Çekilen her sayfanın düzeni ve metni |
-| Fields | Tüm sayfaların tüm alanları |
-| Tables | Eski düzen sayfalardaki tablolar |
-| Attachments | Her ek ve çıkarılan metni |
-| AttachmentTables | Eklerdeki tabloların her satırı. Her hücre ayrı bir sütunda |
-| Financials | Her satırda bir mali değer, hisse kodu ve şirket adıyla birlikte |
+| `disclosure_index` | KAP'ın bildirim numarası |
+| `publish_date` | Yayın zamanı |
+| `stock_code`, `company` | Hisse kodu ve şirket adı |
+| `title`, `summary` | Bildirimin başlığı ve özeti |
+| `class` | Bildirim sınıfı: `ODA`, `FR`, `DUY` veya `DG` |
+| `attachments` | KAP'taki ek sayısı |
+| `attachments_read` | Metni çıkarılmış ek sayısı |
+| `financial_values` | Finansal raporlardan çıkarılan mali değer sayısı |
+| `kap` | Bildirimin KAP sayfasına bağlantı |
+| `detail_file` | Bildirimin detay dosyasına bağlantı |
 
-Bir Excel hücresi en fazla 32.767 karakter alabilir. Bu yüzden uzun metinler Excel'de kesik görünür. Veritabanında her zaman tam metin bulunur.
+**Detay dosyaları.** Detayı çekilmiş her bildirim için `data/details/YYYY-AA-GG/` altına bir Markdown dosyası yazılır, örneğin `data/details/2026-10-05/1672590_GIPTA.md`. Dosyada sırasıyla şunlar bulunur:
+
+- bildirimin genel bilgileri ve KAP bağlantısı,
+- sayfadaki alanlar, bölüm bölüm,
+- sayfadaki tablolar,
+- finansal raporlarda mali tablolar: kalemler satırlarda, dönemler sütunlarda, sayılar KAP'taki gibi `1.234.567` biçiminde,
+- ekler: her birinin sayfa sayısı, tabloları ve metni,
+- sayfanın tam metni.
+
+Detay dosyaları herhangi bir metin düzenleyicide açılabilir. VS Code'un Markdown önizlemesinde tablolar düzgün görünür.
 
 ### Örnek sorgular
 
@@ -289,6 +305,7 @@ Bu sabitler ilgili dosyaların başında bulunur:
 | `kap_attachments.py` | `OCR_DPI` | 300 | Taranmış sayfaların görüntüye çevrilme çözünürlüğü |
 | `kap_attachments.py` | `MIN_TEXT_CHARS` | 50 | Bundan az metin içeren ve görsel barındıran sayfa taranmış sayılır |
 | `kap_attachments.py` | `MAX_OCR_PAGES` | 50 | Dosya başına okunan en fazla taranmış sayfa. Kalanlar `skipped_pages` sütununda sayılır |
+| `kap_output.py` | `EXCEL_MAX_ROWS` | 5000 | Excel özetinde gösterilen en yeni bildirim sayısı |
 
 ## KAP istek sınırları
 
@@ -307,7 +324,7 @@ KAP istek sınırlarını belgelemiyor. Gözlemlediklerimiz şunlar:
 - **Aynı anda tek süreç.** DuckDB, veritabanının yazma amacıyla aynı anda yalnızca tek bir süreç tarafından açılmasına izin verir.
 - **OCR kusursuz değil.** Çizgili tablolardaki rakamlar güvenilir şekilde okunur, ama semboller bazen yanlış okunur. Örneğin `(=)` yerine `(-)` çıkabilir. Taranmış sayfalardaki çizgisiz tablolar sadece düz metin olarak saklanır.
 - **Dosya türleri.** Sadece PDF ve görseller okunur. Diğer ekler `file_type` değeri `unsupported` olarak kaydedilir.
-- **Excel çıktısı büyümeye uygun değil.** Her değişiklikte tüm dosya baştan yazılır ve veritabanı büyüdükçe bu işlem yavaşlar. Ayrıca bir Excel sayfası en fazla 1.048.576 satır alabilir. Asıl analiz için veritabanını kullanın.
+- **Excel özeti sınırlı.** Sadece en yeni 5.000 bildirimi gösterir. Hepsi veritabanında ve detay dosyalarında durur. Asıl analiz için veritabanını kullanın.
 - **KAP değişebilir.** Ayrıştırıcılar, KAP'ın Ekim 2026 itibarıyla kullandığı sayfa düzenlerine göre yazıldı.
 
 ## Sorun giderme
@@ -325,14 +342,15 @@ KAP istek sınırlarını belgelemiyor. Gözlemlediklerimiz şunlar:
 
 ```text
 kap_watch.py          Gerçek zamanlı izleyici, ana giriş noktası
-kap_disclosures.py    Bildirim listesi, ortak ayarlar ve Excel çıktısı
+kap_disclosures.py    Bildirim listesi ve ortak istek ayarları
 kap_details.py        Bildirim sayfaları: metin, alanlar, tablolar ve ek listesi
 kap_attachments.py    Ek indirme, metin ve tablo çıkarma, OCR
 kap_financials.py     XBRL etiketli rapor sayfalarından mali tablolar
+kap_output.py         Veritabanı yolu, Excel özeti ve detay dosyaları
 kap_http.py           KAP'ın istek sınırına ve yavaşlatmasına karşı HTTP yardımcısı
 requirements.txt      Python paketleri
 .env.example          Yerel ayarlar için şablon
-data/                 Veritabanı ve Excel çıktısı. İlk çalıştırmada oluşur, git'e eklenmez
+data/                 Veritabanı, Excel özeti ve detay dosyaları. İlk çalıştırmada oluşur, git'e eklenmez
 tessdata/             Tesseract dil dosyaları. Git'e eklenmez
 ```
 

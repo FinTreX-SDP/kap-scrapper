@@ -20,9 +20,9 @@ import httpx
 import kap_attachments
 import kap_details
 import kap_financials
-from kap_disclosures import (DATA_DIR, DB_PATH, HEADERS, REQUEST_DELAY, SCHEMA, export_to_excel, fetch_day,
-                             save_to_db)
+from kap_disclosures import HEADERS, REQUEST_DELAY, SCHEMA, fetch_day, save_to_db
 from kap_http import RateLimited, kap_get
+from kap_output import DATA_DIR, DB_PATH, export_to_excel, write_detail_file
 
 POLL_INTERVAL = 15  # seconds
 CATCH_UP_MINUTES = 10
@@ -42,6 +42,7 @@ def attachment_worker(con: duckdb.DuckDBPyConnection, jobs: queue.Queue, changed
             try:
                 result = kap_attachments.extract(kap_get(client, url))
                 kap_attachments.save(cur, disclosure_index, file_id, result)
+                write_detail_file(cur, disclosure_index)
                 log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
                     f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
                 changed.set()
@@ -114,6 +115,7 @@ def main() -> None:
                                 items = kap_financials.parse_financials(page["html"])
                                 kap_financials.save(con, disclosure_index, items)
                                 log(f"  financial statements of {disclosure_index}: {len(items)} values")
+                            write_detail_file(con, disclosure_index)
                         except RateLimited:
                             raise
                         except Exception as e:  # retried on the next poll
