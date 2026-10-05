@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local settings; copy .env.example to .env
+.env
+
+# Scraped data: DuckDB database and Excel export
+data/
+
+# Tesseract language files (large binaries); see .env.example
+tessdata/
