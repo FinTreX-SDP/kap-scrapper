@@ -8,7 +8,7 @@ KAP'ta yayımlanan her yeni bildirimi saniyeler içinde yakalar ve içindeki her
 - ekteki PDF ve görsellerin metni ve tabloları, taranmış belgeler için OCR dahil,
 - finansal raporlardaki mali tablolar, dönemleriyle birlikte sayısal değerler olarak.
 
-Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bildirimleri listeleyen bir Excel özeti ve her bildirim için okunaklı bir detay dosyası üretilir.
+Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bildirimleri listeleyen bir Excel özeti ve her bildirim için okunaklı bir detay dosyası üretilir. Her bildirim ayrıca, bir modele ya da başka bir programa verilmek üzere tek bir JSON dosyası olarak da saklanır.
 
 > **Resmî değildir.** Bu proje KAP veya MKK ile bağlantılı değildir. KAP web sitesinin kendisinin kullandığı iç uç noktaları okur. Bu uç noktalar belgelenmemiştir ve haber verilmeden değişebilir. İstek sıklığını düşük tutun ve KAP'ın kullanım koşullarına uyun.
 
@@ -36,6 +36,7 @@ flowchart LR
     fin --> db
     db --> xlsx["Excel özeti<br/>data/disclosures.xlsx"]
     db --> md["Detay dosyaları<br/>data/details/"]
+    db --> json["JSON dosyaları<br/>data/json/"]
 ```
 
 1. **Bildirim listesi.** KAP ana sayfasının attığı isteğin aynısı gönderilir:
@@ -135,7 +136,7 @@ Her yeni bildirim ekranda tek bir satır olarak görünür. Örnek çıktı, de�
 - **Neyi işler.** İzleyici başladıktan sonra yayımlanan bildirimleri ve başlangıçtan önceki 10 dakikayı işler. Böylece kısa bir yeniden başlatmada hiçbir şey kaçmaz. Daha eski bildirimler için toplu çalıştırma betiklerini kullanın.
 - **İş sırası.** Önce bildirim sayfası çekilip kaydedilir. Bildirim finansal raporsa mali tablolar da aynı anda çıkarılır. Ekler arka plandaki bir işçiye gider. Böylece uzun bir OCR işi bir sonraki bildirimi geciktirmez.
 - **Hatalar.** Alınamayan bir bildirim sayfası bir sonraki kontrolde yeniden denenir, en fazla 3 kez. Başarısız olan ekler, ek işçisi boştayken 5 dakikada bir yeniden kuyruğa alınır.
-- **Excel ve detay dosyaları.** Bildirimin detay dosyası sayfası kaydedilir kaydedilmez yazılır ve her ek işlendiğinde güncellenir. Excel özeti yeni veri geldiğinde yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
+- **Excel, detay ve JSON dosyaları.** Bildirimin detay ve JSON dosyaları sayfası kaydedilir kaydedilmez yazılır ve her ek işlendiğinde güncellenir. Excel özeti yeni veri geldiğinde yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
 - **Durdurma.** Ctrl+C'ye basın. Kuyrukta kalan ekler ekrana yazılır. Onları tamamlamak için `python kap_attachments.py` komutunu çalıştırın.
 
 İzleyici çalıştığı sürece veritabanını açık tutar. DuckDB buna aynı anda yalnızca tek bir sürecin izin verir. Toplu çalıştırma betiklerini başlatmadan ya da veritabanını başka bir yerden açmadan önce izleyiciyi durdurun.
@@ -158,7 +159,7 @@ Ayrıştırıcılar değiştiğinde, saklı sayfalar KAP'a gitmeden yeniden işl
 ```powershell
 python kap_details.py --reparse     # saklı tüm sayfaların alanları, tabloları ve metni
 python kap_financials.py --all      # tüm mali tablolar
-python kap_output.py                # Excel özeti ve tüm detay dosyaları
+python kap_output.py                # Excel özeti, tüm detay ve JSON dosyaları
 ```
 
 Toplu çekme, KAP'ın istek sınırları yüzünden yavaştır. Binlerce bildirimin çekilmesi saatler sürebilir. Ayrıntılar için [KAP istek sınırları](#kap-istek-sınırları) bölümüne bakın.
@@ -220,6 +221,36 @@ Bu iki çıktı göz atmak içindir. Tam kayıt her zaman veritabanındadır.
 - sayfanın tam metni.
 
 Detay dosyaları herhangi bir metin düzenleyicide açılabilir. VS Code'un Markdown önizlemesinde tablolar düzgün görünür.
+
+### JSON dosyaları
+
+Detay dosyasıyla aynı içerik, bir modele ya da başka bir programa verilebilecek şekilde her bildirim için ayrı bir JSON dosyasında da saklanır: `data/json/YYYY-AA-GG/`, örneğin `data/json/2026-10-05/1672590_GIPTA.json`. Dosya, detay dosyasıyla aynı anlarda yazılır ve güncellenir. Böylece yeni yakalanan bir bildirim saniyeler içinde JSON olarak hazır olur.
+
+Dosyalar UTF-8'dir, Türkçe karakterler olduğu gibi yazılır. Bir bildirimin kaydı şu anahtarlardan oluşur:
+
+| Anahtar | İçerik |
+|---|---|
+| `disclosure_index` … `url` | `disclosures` tablosunun tüm sütunları, aynı adlarla |
+| `page_format` | `legacy`, `xbrl` veya `empty`. Sayfa henüz çekilmediyse `null` |
+| `fields` | Sayfadaki alanlar: `section`, `concept`, `label`, `value`. Bir alanın birden çok değeri varsa her değer ayrı bir öğedir |
+| `tables` | Sayfadaki tablolar: `section` ve `rows` (satır listesi, her satır bir hücre listesi) |
+| `financial_statements` | Mali tablolar: `statement`, `currency`, `consolidation` ve `items`. Her öğede `concept`, `label`, `member`, `period_label`, `period_start`, `period_end`, `value` bulunur |
+| `attachments` | Ekler: `file_id`, `file_name`, `url`. İşlenmiş eklerde ayrıca `file_type`, `page_count`, `ocr_pages`, `skipped_pages`, `text` ve `tables` (`page`, `method`, `rows`) |
+| `text` | Sayfanın tam metni |
+
+- **Tarihler** metin olarak yazılır: `2026-10-05 22:54:09` ya da `2026-06-30`.
+- **Mali değerler** sayıdır, örneğin `-20388433.0`.
+- **Finansal raporlarda `fields` boştur.** Bu raporların alanları mali tabloların kendisidir ve `financial_statements` içinde zaten yer alır.
+- **Henüz işlenmemiş bir ekte** `text` anahtarı yoktur.
+
+Tüm dosyaları Python'dan okumak için:
+
+```python
+import json
+from pathlib import Path
+
+records = [json.loads(p.read_text(encoding="utf-8")) for p in Path("data/json").rglob("*.json")]
+```
 
 ### Örnek sorgular
 
@@ -346,11 +377,11 @@ kap_disclosures.py    Bildirim listesi ve ortak istek ayarları
 kap_details.py        Bildirim sayfaları: metin, alanlar, tablolar ve ek listesi
 kap_attachments.py    Ek indirme, metin ve tablo çıkarma, OCR
 kap_financials.py     XBRL etiketli rapor sayfalarından mali tablolar
-kap_output.py         Veritabanı yolu, Excel özeti ve detay dosyaları
+kap_output.py         Veritabanı yolu, Excel özeti, detay ve JSON dosyaları
 kap_http.py           KAP'ın istek sınırına ve yavaşlatmasına karşı HTTP yardımcısı
 requirements.txt      Python paketleri
 .env.example          Yerel ayarlar için şablon
-data/                 Veritabanı, Excel özeti ve detay dosyaları. İlk çalıştırmada oluşur, git'e eklenmez
+data/                 Veritabanı, Excel özeti, detay ve JSON dosyaları. İlk çalıştırmada oluşur, git'e eklenmez
 tessdata/             Tesseract dil dosyaları. Git'e eklenmez
 ```
 
