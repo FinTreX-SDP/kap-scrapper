@@ -2,7 +2,7 @@
 import time
 
 import httpx
-from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 # KAP answers 429 after roughly 100 page requests in a few minutes and blocks for several minutes.
@@ -21,8 +21,8 @@ class TooSlow(Exception):
     pass
 
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30),
-       retry=retry_if_not_exception_type((RateLimited, TooSlow)), reraise=True)
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30),  # never retry Ctrl+C (not an Exception)
+       retry=retry_if_exception_type(Exception) & retry_if_not_exception_type((RateLimited, TooSlow)), reraise=True)
 def _get_once(client: httpx.Client, url: str) -> bytes:
     deadline = time.monotonic() + DOWNLOAD_DEADLINE
     with client.stream("GET", url) as r:

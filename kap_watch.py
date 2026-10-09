@@ -37,9 +37,13 @@ def log(message: str) -> None:
 
 
 def fetch_details(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
-                  disclosure_class: str | None) -> dict:
-    """Fetch and save a disclosure page and, for a financial report, its statements. Returns the parsed page."""
+                  disclosure_class: str | None, title: str | None) -> dict:
+    """Fetch and save a disclosure page and, for a financial report, its statements. Returns the parsed page,
+    with the ids of the attachments worth reading under "to_read"; the others are marked as skipped."""
     page = kap_details.parse_page(kap_details.fetch_page(client, disclosure_index))
+    page["to_read"] = kap_attachments.to_read(title, {file_id: a["file_name"] for file_id, a in page["attachments"].items()})
+    # Marked before the page is saved, so no attachment worker ever sees them waiting to be read.
+    kap_attachments.mark_skipped(con, disclosure_index, set(page["attachments"]) - page["to_read"])
     kap_details.save(con, disclosure_index, page)
     if disclosure_class == "FR" and "financial-table" in page["html"]:
         page["financial_items"] = kap_financials.parse_financials(page["html"])
@@ -107,6 +111,7 @@ def main() -> None:
     con.execute(kap_details.SCHEMA)
     con.execute(kap_attachments.SCHEMA)
     con.execute(kap_financials.SCHEMA)
+    kap_attachments.skip_unwanted(con)  # so the retry sweep never downloads them
 
     jobs: queue.Queue = queue.Queue()
     changed = threading.Event()
@@ -130,7 +135,7 @@ def main() -> None:
                         if failures[disclosure_index] >= MAX_FAILURES:
                             continue  # left for kap_details.py, so one bad page cannot block the rest
                         try:
-                            page = fetch_details(con, client, disclosure_index, disclosure_class)
+                            page = fetch_details(con, client, disclosure_index, disclosure_class, title)
                         except RateLimited:
                             raise
                         except Exception as e:  # retried on the next poll
@@ -143,7 +148,8 @@ def main() -> None:
                         log(f"NEW {disclosure_index} {stock_code or '-'}: {title} "
                             f"(published {published:%H:%M:%S}, caught after {delay:.0f} s)")
                         for file_id, a in page["attachments"].items():
-                            jobs.put((disclosure_index, file_id, a["file_name"], a["url"]))
+                            if file_id in page["to_read"]:
+                                jobs.put((disclosure_index, file_id, a["file_name"], a["url"]))
                         changed.set()
                         time.sleep(REQUEST_DELAY)
                 except RateLimited:

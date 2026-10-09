@@ -67,7 +67,8 @@ def excel_value(value):
 
 def export_to_excel(con: duckdb.DuckDBPyConnection) -> int:
     """Write the newest disclosures to the Excel summary; return the number of disclosures in the database."""
-    read = ("(SELECT count(*) FROM attachment_texts t WHERE t.disclosure_index = d.disclosure_index)"
+    read = ("(SELECT count(*) FROM attachment_texts t WHERE t.disclosure_index = d.disclosure_index "
+            "AND t.file_type <> 'skipped')"
             if table_exists(con, "attachment_texts") else "NULL")
     values = ("(SELECT NULLIF(count(*), 0) FROM financial_items f WHERE f.disclosure_index = d.disclosure_index)"
               if table_exists(con, "financial_items") else "NULL")
@@ -212,6 +213,9 @@ def write_detail_file(con: duckdb.DuckDBPyConnection, disclosure_index: int) -> 
         lines += [f"### {a['file_name']}", "", f"Download: {a['url']}", ""]
         if "text" not in a:
             lines += ["Not processed yet.", ""]
+            continue
+        if a["file_type"] == "skipped":
+            lines += ["Not read: attachments of this disclosure type are skipped.", ""]
             continue
         lines += [f"{a['file_type']}, {a['page_count']} pages, {a['ocr_pages']} read with OCR, "
                   f"{a['skipped_pages']} skipped.", ""]

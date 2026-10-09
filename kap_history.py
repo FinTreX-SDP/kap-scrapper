@@ -41,7 +41,7 @@ def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: d
             con.execute("INSERT INTO listed_days VALUES (?)", [day])
         time.sleep(REQUEST_DELAY)
     todo = con.execute("""
-        SELECT disclosure_index, disclosure_class FROM disclosures
+        SELECT disclosure_index, disclosure_class, title FROM disclosures
         WHERE CAST(publish_date AS DATE) = ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)
         ORDER BY publish_date DESC
     """, [day]).fetchall()
@@ -49,9 +49,9 @@ def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: d
         return
     log(f"{day:%d.%m.%Y}: fetching {len(todo)} pages.")
     failed = 0
-    for disclosure_index, disclosure_class in todo:
+    for disclosure_index, disclosure_class, title in todo:
         try:
-            fetch_details(con, client, disclosure_index, disclosure_class)
+            fetch_details(con, client, disclosure_index, disclosure_class, title)
         except Exception as e:  # retried on the next run
             failed += 1
             log(f"  page {disclosure_index} failed, will retry on the next run: {e!r}")
@@ -108,6 +108,7 @@ def main() -> None:
     con.execute(kap_attachments.SCHEMA)
     con.execute(kap_financials.SCHEMA)
     con.execute(LISTED_DAYS_SCHEMA)
+    kap_attachments.skip_unwanted(con)
 
     pages_done = threading.Event()
     worker = threading.Thread(target=attachment_worker, args=(con, args.start, args.end, pages_done), daemon=True)

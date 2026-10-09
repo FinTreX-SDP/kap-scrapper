@@ -20,7 +20,7 @@ Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızl�
 - **Geçmiş.** `kap_history.py`, başlangıç ve bitiş tarihi verilen aralıkta yayımlanan her bildirimi çeker. Kaldığı yerden devam eder.
 - **Eğitim verisi.** Sayfası ve tüm ekleri okunan her bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir.
 - **Bildirim sayfaları.** Düz metin, etiket-değer alanları ve tablolar. KAP bir alanı XBRL kavramıyla etiketlemişse kavram adı da saklanır.
-- **Ekler.** PDF ve görseller bellekte indirilir, diske hiç yazılmaz.
+- **Ekler.** Sadece içeriği sayfada bulunmayan ve model için değerli olan türlerin ekleri okunur, örneğin yatırımcı sunumları ve finansal sonuç bilgilendirme notları ([Hangi ekler okunur](#hangi-ekler-okunur)). PDF ve görseller bellekte indirilir, diske hiç yazılmaz.
   - Metin, PDF'in metin katmanından ya da taranmış sayfa ve görsellerde Tesseract OCR ile çıkarılır.
   - Tablolar PyMuPDF'in tablo bulucusuyla çıkarılır. Taranmış belgelerde tablolar çizgilerinden bulunur ve her hücre ayrı ayrı OCR'dan geçirilir. Böylece hiçbir değer yanlış satıra ya da sütuna kayamaz.
 - **Mali tablolar.** Bilanço, kâr veya zarar tablosu, diğer kapsamlı gelir tablosu, nakit akış tablosu ve özkaynak değişim tablosu. Her satırda tek bir sayısal değer bulunur. Değerin XBRL kavramı, dönemi ve özkaynak tablosunda ait olduğu özkaynak kalemi de saklanır.
@@ -55,6 +55,30 @@ flowchart LR
    Bildirim gövdesinin ham HTML'i de saklanır. Böylece sayfalar daha sonra KAP'a gitmeden yeniden ayrıştırılabilir.
 3. **Ekler.** Dosyalar `https://www.kap.org.tr/tr/api/file/download/{file_id}` adresinden iner. KAP her dosyayı serileştirilmiş bir Java bayt dizisinin içine sarar: 23 baytlık bir başlık, 4 baytlık bir uzunluk bilgisi ve ardından dosyanın kendisi. Betik dosyayı okumadan önce bu sarmalı açar.
 4. **Mali tablolar.** Finansal rapor sayfalarında her mali tablo, XBRL etiketli ayrı bir HTML tablosudur. Olağan tablolarda her değer sütunu bir dönem başlığına aittir. Özkaynak değişim tablosunda ise sütunlar özkaynak kalemleridir, dönemler satır grupları olarak gelir.
+
+### Hangi ekler okunur
+
+Eklerin çoğu ya bildirim sayfasında zaten yazılanın resmî belgesidir ya da uzun, rutin raporlardır. Bu yüzden ekler sadece şu bildirim türlerinde indirilip okunur (`kap_attachments.py` içindeki `EXTRACT_TYPES`):
+
+| Bildirim türü | Ekte ne var |
+|---|---|
+| Özel Durum Açıklaması (Genel) | Yatırımcı sunumları, finansal sonuç bilgilendirme notları, beklenti güncellemeleri. Sayfada çoğu zaman sadece "ekte sunulmuştur" yazar |
+| Kredi Derecelendirmesi | Derecelendirme raporu |
+| Değerleme Raporu | Değerleme raporu |
+| Halka Arz Fiyatının Belirlenmesinde Esas Alınan Varsayımlara İlişkin Değerlendirme Raporu | Halka arz fiyatının varsayımları |
+| Sermaye Artırımından Elde Edilecek - Edilen Fonun Kullanımına İlişkin Rapor | Halka arz ya da sermaye artırımı gelirinin kullanımı |
+
+Diğer türlerin ekleri, örneğin finansal rapor PDF'leri, faaliyet ve sürdürülebilirlik raporları, genel kurul belgeleri, esas sözleşme metinleri ve işlem tabloları, adı ve bağlantısıyla kaydedilir ama indirilmez. `attachment_texts` tablosunda `file_type` değerleri `skipped` olur. Bu karar Ekim 2026'da 5 günlük bir örnek üzerinde verildi. Raporlama döneminde eklerin büyük kısmı finansal rapor ve faaliyet raporlarıydı. Bunların mali tabloları zaten sayfada yapısal olarak bulunuyor.
+
+**İngilizce kopyalar.** Okunan türlerde de bir belgenin İngilizcesi, aynı bildirimde Türkçesi varken indirilmez. Dil, indirmeden önce sadece dosya adından tahmin edilir:
+
+- `ENG`, `English` gibi bir etiket ya da adın sonundaki `EN`: `BİGTK (ENG).pdf`, `PORTFÖY DEĞER RAPORU_KAP EN.pdf`
+- İngilizce kelimeler: `Investor Presentation`, `Earnings Release`, `September 2026 Traffic`
+- Başka bir ekin adına eklenmiş `e`: `Vkfyo07102026e.pdf` ile `Vkfyo07102026.pdf`
+
+Bir ek ancak aynı bildirimde İngilizce olmayan bir ek de varsa atlanır. Tek ekli bildirimlerde ve sadece İngilizce ekleri olan bildirimlerde her ek okunur. Dil belirsizse ek okunur. Böylece bir tahmin hatası en fazla fazladan bir indirmeye yol açar, bilgi kaybına değil.
+
+Listeyi değiştirmek için `EXTRACT_TYPES` sabitini düzenleyin. Listeden çıkarılan türlerin henüz okunmamış ekleri, bir sonraki çalıştırmada atlandı olarak işaretlenir. Listeye eklenen türlerin daha önce atlanmış eklerini okumak için önce bu kayıtları silin: `DELETE FROM attachment_texts WHERE file_type = 'skipped'`. Ekler okunduktan sonra `python kap_output.py` ile JSON Lines dosyasını baştan yazın.
 
 ## Gereksinimler
 
@@ -148,7 +172,7 @@ Her yeni bildirim ekranda tek bir satır olarak görünür. Örnek çıktı, de�
 ```
 
 - **Neyi işler.** İzleyici başladıktan sonra yayımlanan bildirimleri ve başlangıçtan önceki 10 dakikayı işler. Böylece kısa bir yeniden başlatmada hiçbir şey kaçmaz. Daha eski bildirimler için `kap_history.py` kullanın (aşağıda).
-- **İş sırası.** Önce bildirim sayfası çekilip kaydedilir. Bildirim finansal raporsa mali tablolar da aynı anda çıkarılır. Ekler arka plandaki bir işçiye gider. Böylece uzun bir OCR işi bir sonraki bildirimi geciktirmez.
+- **İş sırası.** Önce bildirim sayfası çekilip kaydedilir. Bildirim finansal raporsa mali tablolar da aynı anda çıkarılır. Okunacak türlerin ekleri arka plandaki bir işçiye gider, diğerleri atlandı olarak işaretlenir. Böylece uzun bir OCR işi bir sonraki bildirimi geciktirmez.
 - **Hatalar.** Alınamayan bir bildirim sayfası bir sonraki kontrolde yeniden denenir, en fazla 3 kez. Başarısız olan ekler, ek işçisi boştayken 5 dakikada bir yeniden kuyruğa alınır.
 - **Excel, detay ve JSON dosyaları.** Bildirimin detay ve JSON dosyaları sayfası kaydedilir kaydedilmez yazılır ve her ek işlendiğinde güncellenir. Excel özeti yeni veri geldiğinde yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
 - **JSON Lines dosyası.** Her kontrolde, sayfası ve tüm ekleri okunmuş yeni bildirimler `data/disclosures.jsonl` dosyasına eklenir. Ekleri olan bir bildirim, son eki de işlendikten sonra eklenir.
@@ -167,7 +191,7 @@ python kap_history.py --start 01.01.2025 --end 31.12.2025
 Aralıktaki her bildirim, izleyicideki gibi tamamlanır: sayfa, finansal raporların mali tabloları ve ekler. Bunu iki işçi birlikte yapar:
 
 - **Sayfa işçisi** günleri bitiş gününden başlangıç gününe doğru gezer. Her günün listesini, sonra bildirimlerin sayfalarını çeker.
-- **Ek işçisi** sayfası kaydedilmiş bildirimlerin eklerini, en yeniden başlayarak okur. KAP ekleri çoğu zaman saniyede yaklaşık 20 KB hızla verir. Bu yüzden ekler ayrı bir işçidedir ve sayfa çekimini yavaşlatmaz.
+- **Ek işçisi** sayfası kaydedilmiş bildirimlerin, okunacak türlerdeki eklerini en yeniden başlayarak okur. KAP ekleri çoğu zaman saniyede yaklaşık 20 KB hızla verir. Bu yüzden ekler ayrı bir işçidedir ve sayfa çekimini yavaşlatmaz.
 
 Davranışı:
 
@@ -196,7 +220,7 @@ Süre: KAP'ta iş günü başına yaklaşık 330 bildirim yayımlanır. Ekim 202
 |---|---|---|
 | 1 | `python kap_disclosures.py --start 01.10.2026 --end 05.10.2026` | Aralıktaki her günün bildirim listesini çeker. Tarih verilmezse bugünü çeker. |
 | 2 | `python kap_details.py --limit 50` | Detayı henüz çekilmemiş bildirimlerin sayfalarını en yeniden başlayarak çeker. `--limit` verilmezse hepsini çeker. |
-| 3 | `python kap_attachments.py --limit 20` | Metni henüz çıkarılmamış ekleri indirir, metinlerini ve tablolarını çıkarır. `--limit` verilmezse hepsini işler. |
+| 3 | `python kap_attachments.py --limit 20` | Okunacak türlerde metni henüz çıkarılmamış ekleri indirir, metinlerini ve tablolarını çıkarır. Diğer türlerin eklerini ve İngilizce kopyaları atlandı olarak işaretler. `--limit` verilmezse hepsini işler. |
 | 4 | `python kap_financials.py` | Saklı finansal rapor sayfalarından mali tablo satırlarını üretir. KAP'a istek atmaz. |
 
 2, 3 ve 4. adımlar sadece eksik kalanları işler. Bu yüzden istediğiniz an durdurup yeniden başlatabilirsiniz. 1. adım verilen günleri yeniden çeker ve var olan satırları günceller. Her kayıt tek bir işlem (transaction) içinde yazılır, bu yüzden bir kesinti asla yarım kayıt bırakmaz.
@@ -226,7 +250,7 @@ Veritabanı `data/kap.duckdb` dosyasıdır. Her tabloda `disclosure_index` sütu
 | `disclosure_fields` | sayfadaki bir alan | `section`, `concept` (sadece XBRL sayfalarında), `label`, `value_col`, `value` |
 | `disclosure_tables` | eski düzen bir sayfadaki tablo | `section`, `rows_json` (satır listesi, her satır bir hücre listesi) |
 | `disclosure_attachments` | bir ek | `file_id`, `file_name`, `url` |
-| `attachment_texts` | işlenmiş bir ek | `file_type`, `page_count`, `ocr_pages`, `skipped_pages`, `text` |
+| `attachment_texts` | işlenmiş ya da atlanmış bir ek | `file_type` (`pdf`, `png` gibi bir görsel türü, `unsupported` veya `skipped`), `page_count`, `ocr_pages`, `skipped_pages`, `text` |
 | `attachment_tables` | bir ekteki tablonun bir satırı | `page`, `table_no`, `row_no`, `method` (`text` veya `ocr`), `cells` (metin listesi) |
 | `financial_items` | mali tablodaki bir değer | `statement`, `concept`, `label`, `member`, `period_label`, `period_start`, `period_end`, `value`, `currency`, `consolidation` |
 | `listed_days` | listesi tamamen çekilmiş geçmiş bir gün | `day` |
@@ -293,6 +317,7 @@ Dosyalar UTF-8'dir, Türkçe karakterler olduğu gibi yazılır. Bir bildirimin 
 - **Mali değerler** sayıdır, örneğin `-20388433.0`.
 - **Finansal raporlarda `fields` boştur.** Bu raporların alanları mali tabloların kendisidir ve `financial_statements` içinde zaten yer alır.
 - **Henüz işlenmemiş bir ekte** `text` anahtarı yoktur.
+- **Atlanan bir ekte** `file_type` değeri `skipped`, `text` boştur. Bu ek ya türü okunmayan bir bildirime aittir ya da Türkçesi de bulunan bir belgenin İngilizcesidir ([Hangi ekler okunur](#hangi-ekler-okunur)).
 
 Tüm dosyaları Python'dan okumak için:
 
@@ -307,7 +332,7 @@ records = [json.loads(p.read_text(encoding="utf-8")) for p in Path("data/json").
 
 Model eğitimi için tüm bildirimler `data/disclosures.jsonl` dosyasında toplanır. Her satır, yukarıdaki anahtarlarla bir bildirimin tam kaydıdır. JSON Lines seçildi çünkü yeni bir bildirim dosyanın sonuna tek satır olarak eklenebilir. Tek bir JSON dizisi ise her seferinde baştan yazılmak zorunda kalırdı.
 
-- **Ne zaman eklenir.** Bir bildirim, sayfası ve tüm ekleri okunduktan sonra bir kez eklenir. Yani dosyadaki her kayıt tamdır ve her eki için `text` anahtarı vardır. Ekleri henüz okunamamış bildirimler dosyada yoktur.
+- **Ne zaman eklenir.** Bir bildirim, sayfası ve tüm ekleri okunduktan ya da atlandıktan sonra bir kez eklenir. Yani dosyadaki her kayıt tamdır ve her eki için `text` anahtarı vardır. Ekleri henüz okunamamış bildirimler dosyada yoktur.
 - **Sıra.** İzleyici satırları tamamlanma sırasıyla ekler. `python kap_output.py` dosyayı baştan, yayın zamanına göre sıralı yazar.
 - **Tekrar yok.** Yazılan bildirimler `jsonl_exported` tablosunda tutulur. Böylece aynı bildirim iki kez eklenmez.
 - **Ayrıştırıcı değişince.** Var olan satırlar kendiliğinden güncellenmez. Yeniden ayrıştırmadan sonra `python kap_output.py` ile dosyayı baştan yazın.
@@ -409,6 +434,7 @@ Bu sabitler ilgili dosyaların başında bulunur:
 | `kap_attachments.py` | `OCR_DPI` | 300 | Taranmış sayfaların görüntüye çevrilme çözünürlüğü |
 | `kap_attachments.py` | `MIN_TEXT_CHARS` | 50 | Bundan az metin içeren ve görsel barındıran sayfa taranmış sayılır |
 | `kap_attachments.py` | `MAX_OCR_PAGES` | 50 | Dosya başına okunan en fazla taranmış sayfa. Kalanlar `skipped_pages` sütununda sayılır |
+| `kap_attachments.py` | `EXTRACT_TYPES` | 5 tür | Ekleri okunan bildirim türleri ([Hangi ekler okunur](#hangi-ekler-okunur)) |
 | `kap_output.py` | `EXCEL_MAX_ROWS` | 5000 | Excel özetinde gösterilen en yeni bildirim sayısı |
 
 ## KAP istek sınırları
@@ -429,6 +455,7 @@ KAP istek sınırlarını belgelemiyor. Gözlemlediklerimiz şunlar:
 - **Aynı anda tek süreç.** DuckDB, veritabanının yazma amacıyla aynı anda yalnızca tek bir süreç tarafından açılmasına izin verir.
 - **OCR kusursuz değil.** Çizgili tablolardaki rakamlar güvenilir şekilde okunur, ama semboller bazen yanlış okunur. Örneğin `(=)` yerine `(-)` çıkabilir. Taranmış sayfalardaki çizgisiz tablolar sadece düz metin olarak saklanır.
 - **Dosya türleri.** Sadece PDF ve görseller okunur. Diğer ekler `file_type` değeri `unsupported` olarak kaydedilir.
+- **Ekler seçerek okunur.** Okunmayan türlerin eklerindeki bilgi, örneğin finansal rapor dipnotları ya da faaliyet raporu metni, veride yoktur.
 - **Excel özeti sınırlı.** Sadece en yeni 5.000 bildirimi gösterir. Hepsi veritabanında ve detay dosyalarında durur. Asıl analiz için veritabanını kullanın.
 - **KAP değişebilir.** Ayrıştırıcılar, KAP'ın Ekim 2026 itibarıyla kullandığı sayfa düzenlerine göre yazıldı.
 

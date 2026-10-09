@@ -3,6 +3,8 @@
 Text comes from the PDF text layer, or OCR for scanned pages and images. Tables come from the text layer
 (PyMuPDF table finder) or, on scans, from ruled grid lines whose cells are OCR'd one by one.
 Run kap_details.py first; it lists the attachments. Files are processed in memory and never saved.
+Only attachments of the disclosure types in EXTRACT_TYPES are read, and not the English version of a
+document that also comes in Turkish; the others are marked as skipped.
 
 Usage:
     python kap_attachments.py              # all attachments without extracted text
@@ -11,9 +13,13 @@ Usage:
 import argparse
 import io
 import os
+import re
 import time
+import unicodedata
 from collections import defaultdict
 from datetime import datetime
+from itertools import groupby
+from operator import itemgetter
 from pathlib import Path
 
 import cv2
@@ -42,11 +48,23 @@ MIN_CELL_SIZE = 20  # px at OCR_DPI; smaller enclosed gaps are line noise, not c
 MIN_TABLE_CELLS = 4  # fewer enclosed cells is a framed box or underline, not a table
 ROW_TOLERANCE = 15  # px; cells whose tops are this close belong to the same row
 
+# Disclosure types (the `title` column of disclosures) whose attachments are read. These attachments hold
+# what the disclosure page lacks, such as investor presentations and earnings releases. Other types'
+# attachments are mostly the formal documents behind what the page already says, or long routine reports,
+# so they are listed but not downloaded.
+EXTRACT_TYPES = (
+    "Özel Durum Açıklaması (Genel)",
+    "Kredi Derecelendirmesi",
+    "Değerleme Raporu",
+    "Halka Arz Fiyatının Belirlenmesinde Esas Alınan Varsayımlara İlişkin Değerlendirme Raporu",
+    "Sermaye Artırımından Elde Edilecek - Edilen Fonun Kullanımına İlişkin Rapor",
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS attachment_texts (
     disclosure_index INTEGER,
     file_id VARCHAR,
-    file_type VARCHAR,        -- 'pdf', an image format such as 'png', or 'unsupported'
+    file_type VARCHAR,        -- 'pdf', an image format such as 'png', 'unsupported', or 'skipped' (not read, see EXTRACT_TYPES)
     page_count INTEGER,
     ocr_pages INTEGER,        -- pages read with OCR
     skipped_pages INTEGER,    -- scanned pages not read because of MAX_OCR_PAGES
@@ -193,6 +211,79 @@ def save(con: duckdb.DuckDBPyConnection, disclosure_index: int, file_id: str, re
         raise
 
 
+ENGLISH_TAGS = {"en", "eng", "english", "ingilizce"}  # e.g. 'BİGTK (ENG).pdf', 'RAPORU_KAP EN.pdf'
+TURKISH_TAGS = {"tr", "tur", "turkce"}
+# Words of file names, folded to ASCII. A name with more English than Turkish ones is taken as English.
+ENGLISH_WORDS = {"investor", "presentation", "release", "earning", "earnings", "results", "report", "relations",
+                 "quarter", "financial", "statements", "announcement", "press", "bulletin", "traffic", "rating",
+                 "valuation", "translation", "amendment", "articles", "annual", "interim", "january", "february",
+                 "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"}
+TURKISH_WORDS = {"yatirimci", "sunum", "sunumu", "bilgilendirme", "bulten", "bulteni", "sonuc", "sonuclar",
+                 "sonuclari", "notu", "dokuman", "dokumani", "rapor", "raporu", "ceyrek", "donem", "donemi",
+                 "finansal", "faaliyet", "trafik", "aciklama", "degerleme", "derecelendirme", "basin", "duyuru",
+                 "ocak", "subat", "mart", "nisan", "mayis", "haziran", "temmuz", "agustos", "eylul", "ekim",
+                 "kasim", "aralik"}
+
+
+def name_words(file_name: str) -> list[str]:
+    """'GWIND_Yatırımcı_Sunumu.pdf' -> ['gwind', 'yatirimci', 'sunumu']"""
+    stem = file_name.rsplit(".", 1)[0].replace("ı", "i").replace("İ", "I")
+    return re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode().lower())
+
+
+def is_english(words: list[str]) -> bool:
+    # 'en' is also a Turkish word, so as a tag it only counts at the end of the name.
+    if (ENGLISH_TAGS - {"en"}) & set(words) or words[-1:] == ["en"]:
+        return True
+    if TURKISH_TAGS & set(words):
+        return False
+    return len(ENGLISH_WORDS & set(words)) > len(TURKISH_WORDS & set(words))
+
+
+def to_read(title: str | None, file_names: dict[str, str]) -> set[str]:
+    """The file ids worth reading among one disclosure's attachments ({file_id: file_name}): none for a
+    disclosure type outside EXTRACT_TYPES, and no English version when the disclosure has a non-English
+    attachment too. The language is guessed from file names; when unsure, the attachment is read."""
+    if (title or "").strip() not in EXTRACT_TYPES:
+        return set()
+    words = {file_id: name_words(name) for file_id, name in file_names.items()}
+    joined = {file_id: "".join(w) for file_id, w in words.items()}
+    english = {file_id for file_id in file_names if is_english(words[file_id]) or any(  # e.g. 'Vkfyo07102026e.pdf'
+        joined[file_id] in (joined[other] + "e", joined[other] + "en") for other in file_names if other != file_id)}
+    return set(file_names) - english if len(english) < len(file_names) else set(file_names)
+
+
+def mark_skipped(con: duckdb.DuckDBPyConnection, disclosure_index: int, file_ids) -> None:
+    """Record attachments as skipped, i.e. not downloaded. Safe to repeat."""
+    for file_id in file_ids:
+        con.execute("INSERT OR IGNORE INTO attachment_texts VALUES (?, ?, 'skipped', 0, 0, 0, '', ?)",
+                    [disclosure_index, file_id, datetime.now()])
+
+
+def skip_unwanted(con: duckdb.DuckDBPyConnection) -> int:
+    """Mark waiting attachments that to_read() rejects as skipped and update their detail files. Catches
+    attachments listed by kap_details.py or before the rules changed. Returns how many were marked."""
+    rows = con.execute("""
+        SELECT a.disclosure_index, d.title, a.file_id, a.file_name, t.file_id IS NULL AS waiting
+        FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
+        LEFT JOIN attachment_texts t ON t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id
+        WHERE a.disclosure_index IN (
+            SELECT a2.disclosure_index FROM disclosure_attachments a2 WHERE NOT EXISTS (
+                SELECT 1 FROM attachment_texts t2 WHERE t2.disclosure_index = a2.disclosure_index AND t2.file_id = a2.file_id))
+        ORDER BY a.disclosure_index
+    """).fetchall()
+    marked = 0
+    for disclosure_index, group in groupby(rows, key=itemgetter(0)):
+        group = list(group)
+        read = to_read(group[0][1], {file_id: file_name for _, _, file_id, file_name, _ in group})
+        skipped = [file_id for _, _, file_id, _, waiting in group if waiting and file_id not in read]
+        if skipped:
+            mark_skipped(con, disclosure_index, skipped)
+            write_detail_file(con, disclosure_index)
+            marked += len(skipped)
+    return marked
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract text from KAP disclosure attachments.")
     parser.add_argument("--limit", type=int, help="process at most this many attachments")
@@ -200,6 +291,8 @@ def main() -> None:
 
     con = duckdb.connect(str(DB_PATH))
     con.execute(SCHEMA)
+    if count := skip_unwanted(con):
+        print(f"Skipped {count} attachments (disclosure types that are not read, or English duplicates)")
     query = """
         SELECT a.disclosure_index, a.file_id, a.url FROM disclosure_attachments a
         WHERE NOT EXISTS (SELECT 1 FROM attachment_texts t
