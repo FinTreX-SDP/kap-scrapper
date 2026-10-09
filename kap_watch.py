@@ -3,7 +3,9 @@
 Polls the disclosure list every POLL_INTERVAL seconds. Details are fetched right away; attachments
 (which may need slow OCR) are handled by a background worker so they never delay new disclosures.
 Only disclosures published after the watcher started are processed (minus CATCH_UP_MINUTES, so a
-short restart does not miss anything). Stop with Ctrl+C.
+short restart does not miss anything); kap_history.py fetches older ones. Stop with Ctrl+C.
+
+Every disclosure whose page and attachments have all been read is appended to data/disclosures.jsonl.
 
 Usage:
     python kap_watch.py
@@ -22,7 +24,7 @@ import kap_details
 import kap_financials
 from kap_disclosures import HEADERS, REQUEST_DELAY, SCHEMA, fetch_day, save_to_db
 from kap_http import RateLimited, kap_get
-from kap_output import DATA_DIR, DB_PATH, export_to_excel, write_detail_file
+from kap_output import DATA_DIR, DB_PATH, append_to_jsonl, export_to_excel, write_detail_file
 
 POLL_INTERVAL = 15  # seconds
 CATCH_UP_MINUTES = 10
@@ -34,15 +36,34 @@ def log(message: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
 
 
+def fetch_details(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
+                  disclosure_class: str | None) -> dict:
+    """Fetch and save a disclosure page and, for a financial report, its statements. Returns the parsed page."""
+    page = kap_details.parse_page(kap_details.fetch_page(client, disclosure_index))
+    kap_details.save(con, disclosure_index, page)
+    if disclosure_class == "FR" and "financial-table" in page["html"]:
+        page["financial_items"] = kap_financials.parse_financials(page["html"])
+        kap_financials.save(con, disclosure_index, page["financial_items"])
+    write_detail_file(con, disclosure_index)
+    return page
+
+
+def fetch_attachment(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
+                     file_id: str, url: str) -> dict:
+    """Download one attachment, extract its text and tables and save them. Returns the extraction result."""
+    result = kap_attachments.extract(kap_get(client, url))
+    kap_attachments.save(con, disclosure_index, file_id, result)
+    write_detail_file(con, disclosure_index)
+    return result
+
+
 def attachment_worker(con: duckdb.DuckDBPyConnection, jobs: queue.Queue, changed: threading.Event) -> None:
     cur = con.cursor()  # DuckDB needs a separate cursor per thread
     with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
         while True:
             disclosure_index, file_id, file_name, url = jobs.get()
             try:
-                result = kap_attachments.extract(kap_get(client, url))
-                kap_attachments.save(cur, disclosure_index, file_id, result)
-                write_detail_file(cur, disclosure_index)
+                result = fetch_attachment(cur, client, disclosure_index, file_id, url)
                 log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
                     f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
                 changed.set()
@@ -109,19 +130,15 @@ def main() -> None:
                         if failures[disclosure_index] >= MAX_FAILURES:
                             continue  # left for kap_details.py, so one bad page cannot block the rest
                         try:
-                            page = kap_details.parse_page(kap_details.fetch_page(client, disclosure_index))
-                            kap_details.save(con, disclosure_index, page)
-                            if disclosure_class == "FR" and "financial-table" in page["html"]:
-                                items = kap_financials.parse_financials(page["html"])
-                                kap_financials.save(con, disclosure_index, items)
-                                log(f"  financial statements of {disclosure_index}: {len(items)} values")
-                            write_detail_file(con, disclosure_index)
+                            page = fetch_details(con, client, disclosure_index, disclosure_class)
                         except RateLimited:
                             raise
                         except Exception as e:  # retried on the next poll
                             failures[disclosure_index] += 1
                             log(f"Details of {disclosure_index} failed ({failures[disclosure_index]}/{MAX_FAILURES}): {e}")
                             continue
+                        if "financial_items" in page:
+                            log(f"  financial statements of {disclosure_index}: {len(page['financial_items'])} values")
                         delay = (datetime.now() - published).total_seconds()
                         log(f"NEW {disclosure_index} {stock_code or '-'}: {title} "
                             f"(published {published:%H:%M:%S}, caught after {delay:.0f} s)")
@@ -140,6 +157,7 @@ def main() -> None:
                         export_to_excel(con)
                     except PermissionError:
                         log("Excel file is open, so it was not updated. Close it to get updates.")
+                append_to_jsonl(con)
                 time.sleep(max(0.0, POLL_INTERVAL - (time.monotonic() - started)))
     except KeyboardInterrupt:
         log("Stopping.")
@@ -147,6 +165,7 @@ def main() -> None:
         pending = jobs.qsize()
         if pending:
             log(f"{pending} attachments were still queued; run kap_attachments.py to process them.")
+        append_to_jsonl(con)
         try:
             export_to_excel(con)
         except PermissionError:

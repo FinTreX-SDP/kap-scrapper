@@ -86,7 +86,7 @@ def save_to_db(con: duckdb.DuckDBPyConnection, disclosures: list[Disclosure]) ->
         d.disclosureClass, d.disclosureType, d.disclosureCategory,
         d.period, d.year, d.attachmentCount, d.isLate, d.relatedStocks,
         DISCLOSURE_URL.format(d.disclosureIndex),
-    ) for d in disclosures], orient="row")
+    ) for d in disclosures], orient="row", infer_schema_length=None)  # all rows: early ones may lack e.g. a stock code
     con.execute("INSERT OR REPLACE INTO disclosures SELECT * FROM df")
 
 

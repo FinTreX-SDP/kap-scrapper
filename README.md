@@ -8,13 +8,17 @@ KAP'ta yayımlanan her yeni bildirimi saniyeler içinde yakalar ve içindeki her
 - ekteki PDF ve görsellerin metni ve tabloları, taranmış belgeler için OCR dahil,
 - finansal raporlardaki mali tablolar, dönemleriyle birlikte sayısal değerler olarak.
 
-Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bildirimleri listeleyen bir Excel özeti ve her bildirim için okunaklı bir detay dosyası üretilir. Her bildirim ayrıca, bir modele ya da başka bir programa verilmek üzere tek bir JSON dosyası olarak da saklanır.
+Tüm veriler tek bir [DuckDB](https://duckdb.org) veritabanında tutulur. Hızlıca göz atmak için ayrıca bildirimleri listeleyen bir Excel özeti ve her bildirim için okunaklı bir detay dosyası üretilir. Her bildirim ayrıca, bir modele ya da başka bir programa verilmek üzere tek bir JSON dosyası olarak da saklanır. Model eğitimi için tüm bildirimler tek bir JSON Lines dosyasında da toplanır.
+
+İstenirse canlı akış yerine, başlangıç ve bitiş tarihi verilen bir aralıktaki geçmiş bildirimleri de çeker.
 
 > **Resmî değildir.** Bu proje KAP veya MKK ile bağlantılı değildir. KAP web sitesinin kendisinin kullandığı iç uç noktaları okur. Bu uç noktalar belgelenmemiştir ve haber verilmeden değişebilir. İstek sıklığını düşük tutun ve KAP'ın kullanım koşullarına uyun.
 
 ## Özellikler
 
 - **Gerçek zamanlı izleyici.** KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler.
+- **Geçmiş.** `kap_history.py`, başlangıç ve bitiş tarihi verilen aralıkta yayımlanan her bildirimi çeker. Kaldığı yerden devam eder.
+- **Eğitim verisi.** Sayfası ve tüm ekleri okunan her bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir.
 - **Bildirim sayfaları.** Düz metin, etiket-değer alanları ve tablolar. KAP bir alanı XBRL kavramıyla etiketlemişse kavram adı da saklanır.
 - **Ekler.** PDF ve görseller bellekte indirilir, diske hiç yazılmaz.
   - Metin, PDF'in metin katmanından ya da taranmış sayfa ve görsellerde Tesseract OCR ile çıkarılır.
@@ -37,6 +41,7 @@ flowchart LR
     db --> xlsx["Excel özeti<br/>data/disclosures.xlsx"]
     db --> md["Detay dosyaları<br/>data/details/"]
     db --> json["JSON dosyaları<br/>data/json/"]
+    db --> jsonl["Tüm bildirimler<br/>data/disclosures.jsonl"]
 ```
 
 1. **Bildirim listesi.** KAP ana sayfasının attığı isteğin aynısı gönderilir:
@@ -98,7 +103,7 @@ flowchart LR
    | `TESSERACT_CMD` | `tesseract.exe` dosyasının tam yolu. Genelde `C:\Program Files\Tesseract-OCR\tesseract.exe` |
    | `TESSDATA_PREFIX` | Projedeki `tessdata` klasörünün tam yolu |
 
-   `kap_watch.py` ve `kap_attachments.py` bu ayarlara ihtiyaç duyar. `TESSERACT_CMD` tanımlı değilse başlarken durur.
+   `kap_watch.py`, `kap_history.py` ve `kap_attachments.py` bu ayarlara ihtiyaç duyar. `TESSERACT_CMD` tanımlı değilse başlarken durur.
 
 ### Linux ve macOS (test edilmedi)
 
@@ -115,9 +120,18 @@ Ardından `.env` dosyasında `TESSERACT_CMD=/usr/bin/tesseract` ve `TESSDATA_PRE
 
 ## Kullanım
 
+İki çalışma şekli vardır. Aynı anda yalnızca biri çalıştırılır:
+
+| Ne istiyorsunuz | Komut |
+|---|---|
+| Yeni bildirimleri yayımlandıkları anda yakalamak | `python kap_watch.py` |
+| Bir tarih aralığındaki geçmiş bildirimleri çekmek | `python kap_history.py --start 01.01.2025 --end 31.12.2025` |
+
+İkisi de her bildirimi aynı şekilde işler ve aynı veritabanına, aynı dosyalara yazar.
+
 ### Gerçek zamanlı izleyici
 
-Projenin ana kullanım şekli budur. Başlatın ve açık bırakın:
+Başlatın ve açık bırakın:
 
 ```powershell
 python kap_watch.py
@@ -133,17 +147,50 @@ Her yeni bildirim ekranda tek bir satır olarak görünür. Örnek çıktı, de�
 [09:42:48] NEW 1672720 BTCIM: Finansal Rapor (published 09:42:36, caught after 12 s)
 ```
 
-- **Neyi işler.** İzleyici başladıktan sonra yayımlanan bildirimleri ve başlangıçtan önceki 10 dakikayı işler. Böylece kısa bir yeniden başlatmada hiçbir şey kaçmaz. Daha eski bildirimler için toplu çalıştırma betiklerini kullanın.
+- **Neyi işler.** İzleyici başladıktan sonra yayımlanan bildirimleri ve başlangıçtan önceki 10 dakikayı işler. Böylece kısa bir yeniden başlatmada hiçbir şey kaçmaz. Daha eski bildirimler için `kap_history.py` kullanın (aşağıda).
 - **İş sırası.** Önce bildirim sayfası çekilip kaydedilir. Bildirim finansal raporsa mali tablolar da aynı anda çıkarılır. Ekler arka plandaki bir işçiye gider. Böylece uzun bir OCR işi bir sonraki bildirimi geciktirmez.
 - **Hatalar.** Alınamayan bir bildirim sayfası bir sonraki kontrolde yeniden denenir, en fazla 3 kez. Başarısız olan ekler, ek işçisi boştayken 5 dakikada bir yeniden kuyruğa alınır.
 - **Excel, detay ve JSON dosyaları.** Bildirimin detay ve JSON dosyaları sayfası kaydedilir kaydedilmez yazılır ve her ek işlendiğinde güncellenir. Excel özeti yeni veri geldiğinde yeniden yazılır. Dosya Excel'de açıksa değiştirilemez. İzleyici bunu ekrana yazar ve bir sonraki değişiklikte yeniden dener.
-- **Durdurma.** Ctrl+C'ye basın. Kuyrukta kalan ekler ekrana yazılır. Onları tamamlamak için `python kap_attachments.py` komutunu çalıştırın.
+- **JSON Lines dosyası.** Her kontrolde, sayfası ve tüm ekleri okunmuş yeni bildirimler `data/disclosures.jsonl` dosyasına eklenir. Ekleri olan bir bildirim, son eki de işlendikten sonra eklenir.
+- **Durdurma.** Ctrl+C'ye basın. Kuyrukta kalan ekler ekrana yazılır. Onları tamamlamak için `python kap_attachments.py` komutunu ya da o günler için `kap_history.py` komutunu çalıştırın.
 
-İzleyici çalıştığı sürece veritabanını açık tutar. DuckDB buna aynı anda yalnızca tek bir sürecin izin verir. Toplu çalıştırma betiklerini başlatmadan ya da veritabanını başka bir yerden açmadan önce izleyiciyi durdurun.
+İzleyici çalıştığı sürece veritabanını açık tutar. DuckDB buna aynı anda yalnızca tek bir sürecin izin verir. Geçmiş çekimini ya da toplu çalıştırma betiklerini başlatmadan, veya veritabanını başka bir yerden açmadan önce izleyiciyi durdurun.
+
+### Geçmiş bildirimler
+
+Bir başlangıç ve bir bitiş günü verin. İki gün de aralığa dahildir:
+
+```powershell
+python kap_history.py --start 01.01.2025 --end 31.12.2025
+```
+
+Aralıktaki her bildirim, izleyicideki gibi tamamlanır: sayfa, finansal raporların mali tabloları ve ekler. Bunu iki işçi birlikte yapar:
+
+- **Sayfa işçisi** günleri bitiş gününden başlangıç gününe doğru gezer. Her günün listesini, sonra bildirimlerin sayfalarını çeker.
+- **Ek işçisi** sayfası kaydedilmiş bildirimlerin eklerini, en yeniden başlayarak okur. KAP ekleri çoğu zaman saniyede yaklaşık 20 KB hızla verir. Bu yüzden ekler ayrı bir işçidedir ve sayfa çekimini yavaşlatmaz.
+
+Davranışı:
+
+- **Kaldığı yerden devam eder.** Tamamlanmış sayfalar ve okunmuş ekler atlanır. Geçmiş bir günün listesi bir kez çekilir ve `listed_days` tablosuna işaretlenir. Aynı komutu yeniden çalıştırmak, durduğu yerden devam eder. Bugünün listesi henüz tamamlanmadığı için her çalıştırmada yeniden çekilir.
+- **Hatalar.** Bir sayfa, ek ya da günün listesi alınamazsa ekrana yazılır ve aynı komutun bir sonraki çalıştırılmasında yeniden denenir.
+- **Bitiş.** Tüm sayfalar çekilip ekler de bittiğinde betik kendiliğinden kapanır. Ctrl+C ile istediğiniz an durdurabilirsiniz.
+- **JSON Lines dosyası.** Tamamlanan bildirimler her günün sonunda ve ekler bitmeyi beklerken düzenli olarak `data/disclosures.jsonl` dosyasına eklenir.
+
+Süre: KAP'ta iş günü başına yaklaşık 330 bildirim yayımlanır. Ekim 2026'daki testlerde, ekler paralel inerken bir sayfa ortalama 5 ile 6,5 saniye sürdü. Buna göre bir iş günü yaklaşık 30 ile 35 dakika, bir yıllık geçmiş yaklaşık 6 gün sürer. Ekler, KAP'ın indirme hızına bağlı olarak buna paralel ilerler. 2 MB'lık bir PDF'in inmesi 80 saniye sürebilir.
+
+Örnek çıktı, değerler temsilîdir:
+
+```text
+[09:30:02] Fetching disclosures published from 01.01.2025 to 31.12.2025, newest day first. Ctrl+C to stop.
+[09:30:03] 31.12.2025: fetching 212 pages.
+[09:30:31]   attachment 1612345 'Sozlesme.pdf': 2 pages, 2 OCR, 0 tables
+[09:42:10] 31.12.2025: fetched 212 pages, 0 failed.
+[09:42:14] 30.12.2025: fetching 331 pages.
+```
 
 ### Toplu çalıştırma
 
-Geçmiş bildirimleri çekmek ya da yarım kalan işi tamamlamak için bu betikleri sırayla çalıştırın:
+İşi tek tek adımlarla yapmak ya da yarım kalan işi tamamlamak için bu betikleri sırayla çalıştırın:
 
 | Adım | Komut | Ne yapar |
 |---|---|---|
@@ -159,8 +206,10 @@ Ayrıştırıcılar değiştiğinde, saklı sayfalar KAP'a gitmeden yeniden işl
 ```powershell
 python kap_details.py --reparse     # saklı tüm sayfaların alanları, tabloları ve metni
 python kap_financials.py --all      # tüm mali tablolar
-python kap_output.py                # Excel özeti, tüm detay ve JSON dosyaları
+python kap_output.py                # Excel özeti, tüm detay ve JSON dosyaları, JSON Lines dosyası
 ```
+
+Toplu çalıştırma betikleri JSON Lines dosyasına satır eklemez. İzleyici ya da `kap_history.py` bir sonraki çalıştırmada eksik satırları ekler. `python kap_output.py` ise dosyayı baştan yazar.
 
 Toplu çekme, KAP'ın istek sınırları yüzünden yavaştır. Binlerce bildirimin çekilmesi saatler sürebilir. Ayrıntılar için [KAP istek sınırları](#kap-istek-sınırları) bölümüne bakın.
 
@@ -180,6 +229,8 @@ Veritabanı `data/kap.duckdb` dosyasıdır. Her tabloda `disclosure_index` sütu
 | `attachment_texts` | işlenmiş bir ek | `file_type`, `page_count`, `ocr_pages`, `skipped_pages`, `text` |
 | `attachment_tables` | bir ekteki tablonun bir satırı | `page`, `table_no`, `row_no`, `method` (`text` veya `ocr`), `cells` (metin listesi) |
 | `financial_items` | mali tablodaki bir değer | `statement`, `concept`, `label`, `member`, `period_label`, `period_start`, `period_end`, `value`, `currency`, `consolidation` |
+| `listed_days` | listesi tamamen çekilmiş geçmiş bir gün | `day` |
+| `jsonl_exported` | JSON Lines dosyasına yazılmış bir bildirim | `disclosure_index` |
 
 Veriyle ilgili notlar:
 
@@ -250,6 +301,27 @@ import json
 from pathlib import Path
 
 records = [json.loads(p.read_text(encoding="utf-8")) for p in Path("data/json").rglob("*.json")]
+```
+
+### Tüm bildirimler tek dosyada (JSON Lines)
+
+Model eğitimi için tüm bildirimler `data/disclosures.jsonl` dosyasında toplanır. Her satır, yukarıdaki anahtarlarla bir bildirimin tam kaydıdır. JSON Lines seçildi çünkü yeni bir bildirim dosyanın sonuna tek satır olarak eklenebilir. Tek bir JSON dizisi ise her seferinde baştan yazılmak zorunda kalırdı.
+
+- **Ne zaman eklenir.** Bir bildirim, sayfası ve tüm ekleri okunduktan sonra bir kez eklenir. Yani dosyadaki her kayıt tamdır ve her eki için `text` anahtarı vardır. Ekleri henüz okunamamış bildirimler dosyada yoktur.
+- **Sıra.** İzleyici satırları tamamlanma sırasıyla ekler. `python kap_output.py` dosyayı baştan, yayın zamanına göre sıralı yazar.
+- **Tekrar yok.** Yazılan bildirimler `jsonl_exported` tablosunda tutulur. Böylece aynı bildirim iki kez eklenmez.
+- **Ayrıştırıcı değişince.** Var olan satırlar kendiliğinden güncellenmez. Yeniden ayrıştırmadan sonra `python kap_output.py` ile dosyayı baştan yazın.
+
+Okumak için:
+
+```python
+import polars as pl
+
+df = pl.read_ndjson("data/disclosures.jsonl")
+
+# ya da Hugging Face datasets ile
+from datasets import load_dataset
+ds = load_dataset("json", data_files="data/disclosures.jsonl", split="train")
 ```
 
 ### Örnek sorgular
@@ -328,6 +400,7 @@ Bu sabitler ilgili dosyaların başında bulunur:
 | `kap_watch.py` | `CATCH_UP_MINUTES` | 10 dk | İzleyicinin başlangıç anından ne kadar geriye baktığı |
 | `kap_watch.py` | `RETRY_INTERVAL` | 300 sn | Başarısız eklerin yeniden denenme aralığı |
 | `kap_watch.py` | `MAX_FAILURES` | 3 | İzleyicinin bir bildirim sayfasını atlamadan önceki deneme sayısı |
+| `kap_history.py` | `REQUEST_DELAY` | 3 sn | Geçmiş çekiminde her işçinin istekleri arasındaki bekleme |
 | `kap_disclosures.py` | `REQUEST_DELAY` | 1 sn | İstekler arasındaki bekleme |
 | `kap_http.py` | `RATE_LIMIT_PAUSE` | 300 sn | KAP "çok fazla istek" yanıtı verince beklenen süre |
 | `kap_http.py` | `MAX_RATE_LIMIT_PAUSES` | 3 | Vazgeçmeden önceki ardışık bekleme sayısı |
@@ -346,12 +419,13 @@ KAP istek sınırlarını belgelemiyor. Gözlemlediklerimiz şunlar:
 - **Yavaşlatma.** KAP bazen isteği reddetmek yerine yanıtı saniyede yaklaşık 10 KB'a düşürür. Bu yüzden her indirmenin 180 saniyelik bir süre sınırı vardır. İzleyici yarıda bırakılan ekleri daha sonra yeniden kuyruğa alır.
 - **Veri kaybolmaz.** KAP izleyiciyi engellediği sürece yeni bildirimler sadece gecikir. Engel kalkınca izleyici, başladığından beri yayımlanan her şeyi işler.
 
-İzleyicinin kendi yükü küçüktür: 15 saniyede bir liste isteği, artı her yeni bildirim ve her ek için birer istek. Sınırlara asıl takılan iş toplu çekmedir. `POLL_INTERVAL` ya da `REQUEST_DELAY` değerlerini fazla düşürmek engellenme ihtimalini artırır. Bir engelleme ise tüm yakalamayı dakikalarca durdurur.
+İzleyicinin kendi yükü küçüktür: 15 saniyede bir liste isteği, artı her yeni bildirim ve her ek için birer istek. Sınırlara asıl takılan iş geçmiş ve toplu çekmedir. `POLL_INTERVAL` ya da `REQUEST_DELAY` değerlerini fazla düşürmek engellenme ihtimalini artırır. Bir engelleme ise tüm yakalamayı dakikalarca durdurur. Geçmiş çekimi sırasında ekranda sık sık `KAP rate limit hit` görürseniz `kap_history.py` içindeki `REQUEST_DELAY` değerini artırın.
 
 ## Sınırlamalar
 
 - **Fonlar** kapsanmıyor.
-- **İzleyicinin çalışıyor olması gerekir.** Kapalıyken hiçbir şey yakalamaz. Yeniden başladığında sadece son 10 dakikayı telafi eder. Henüz bilgisayar açılınca kendiliğinden başlamıyor.
+- **İzleyicinin çalışıyor olması gerekir.** Kapalıyken hiçbir şey yakalamaz. Yeniden başladığında sadece son 10 dakikayı telafi eder. Aradaki boşluğu `kap_history.py` ile doldurabilirsiniz. Henüz bilgisayar açılınca kendiliğinden başlamıyor.
+- **Okunamayan ekler.** Bir eki sürekli indirilemeyen ya da okunamayan bildirim, JSON Lines dosyasına eklenmez. Veritabanında ve kendi JSON dosyasında yine bulunur.
 - **Aynı anda tek süreç.** DuckDB, veritabanının yazma amacıyla aynı anda yalnızca tek bir süreç tarafından açılmasına izin verir.
 - **OCR kusursuz değil.** Çizgili tablolardaki rakamlar güvenilir şekilde okunur, ama semboller bazen yanlış okunur. Örneğin `(=)` yerine `(-)` çıkabilir. Taranmış sayfalardaki çizgisiz tablolar sadece düz metin olarak saklanır.
 - **Dosya türleri.** Sadece PDF ve görseller okunur. Diğer ekler `file_type` değeri `unsupported` olarak kaydedilir.
@@ -372,12 +446,13 @@ KAP istek sınırlarını belgelemiyor. Gözlemlediklerimiz şunlar:
 ## Proje yapısı
 
 ```text
-kap_watch.py          Gerçek zamanlı izleyici, ana giriş noktası
+kap_watch.py          Gerçek zamanlı izleyici
+kap_history.py        Bir tarih aralığındaki geçmiş bildirimler
 kap_disclosures.py    Bildirim listesi ve ortak istek ayarları
 kap_details.py        Bildirim sayfaları: metin, alanlar, tablolar ve ek listesi
 kap_attachments.py    Ek indirme, metin ve tablo çıkarma, OCR
 kap_financials.py     XBRL etiketli rapor sayfalarından mali tablolar
-kap_output.py         Veritabanı yolu, Excel özeti, detay ve JSON dosyaları
+kap_output.py         Veritabanı yolu, Excel özeti, detay, JSON ve JSON Lines dosyaları
 kap_http.py           KAP'ın istek sınırına ve yavaşlatmasına karşı HTTP yardımcısı
 requirements.txt      Python paketleri
 .env.example          Yerel ayarlar için şablon

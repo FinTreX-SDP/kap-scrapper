@@ -1,12 +1,15 @@
-"""Where the data goes: the database path, an Excel summary and per disclosure a Markdown and a JSON file.
+"""Where the data goes: the database path, an Excel summary, per disclosure a Markdown and a JSON file,
+and one JSON Lines file with every disclosure.
 
 The database is the full record. The Excel file and the Markdown detail files are for people to look at:
 the Excel file lists the newest disclosures with their main fields, and each row links to the
 disclosure's detail file, which shows everything extracted from it. The JSON file holds the same
-content as data, for programs such as a model that reads disclosures.
+content as data, for programs such as a model that reads disclosures. The JSON Lines file collects all
+disclosures in one place, one per line, for training a model; a disclosure is added once its page and
+all of its attachments have been read.
 
 Usage:
-    python kap_output.py   # rebuild the Excel summary and every detail and JSON file from the database
+    python kap_output.py   # rebuild the Excel summary, every detail and JSON file and the JSON Lines file
 """
 import json
 import re
@@ -23,7 +26,14 @@ DB_PATH = DATA_DIR / "kap.duckdb"
 EXCEL_PATH = DATA_DIR / "disclosures.xlsx"
 DETAILS_DIR = DATA_DIR / "details"
 JSON_DIR = DATA_DIR / "json"
+JSONL_PATH = DATA_DIR / "disclosures.jsonl"
 EXCEL_MAX_ROWS = 5000  # newest disclosures in the Excel summary; the database keeps all of them
+
+JSONL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS jsonl_exported (
+    disclosure_index INTEGER PRIMARY KEY  -- already a line in the JSON Lines file
+)
+"""
 
 EXCEL_COLUMNS = {  # header -> column width
     "disclosure_index": 12, "publish_date": 19, "stock_code": 12, "company": 40, "title": 45,
@@ -223,15 +233,51 @@ def write_detail_file(con: duckdb.DuckDBPyConnection, disclosure_index: int) -> 
     return path
 
 
+def append_to_jsonl(con: duckdb.DuckDBPyConnection) -> int:
+    """Append disclosures whose page and attachments have all been read and that are not in the
+    JSON Lines file yet, oldest first. Returns how many were appended."""
+    if not table_exists(con, "disclosure_details"):
+        return 0
+    con.execute(JSONL_SCHEMA)
+    unread = ("NOT EXISTS (SELECT 1 FROM attachment_texts t "
+              "WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)"
+              if table_exists(con, "attachment_texts") else "TRUE")
+    indexes = [row[0] for row in con.execute(f"""
+        SELECT x.disclosure_index FROM disclosure_details x JOIN disclosures d USING (disclosure_index)
+        WHERE x.disclosure_index NOT IN (SELECT disclosure_index FROM jsonl_exported)
+          AND NOT EXISTS (SELECT 1 FROM disclosure_attachments a
+                          WHERE a.disclosure_index = x.disclosure_index AND {unread})
+        ORDER BY d.publish_date
+    """).fetchall()]
+    if not indexes:
+        return 0
+    with JSONL_PATH.open("a", encoding="utf-8") as f:
+        for disclosure_index in indexes:
+            f.write(json.dumps(disclosure_record(con, disclosure_index), ensure_ascii=False, default=str) + "\n")
+            f.flush()
+            con.execute("INSERT INTO jsonl_exported VALUES (?)", [disclosure_index])
+    return len(indexes)
+
+
+def rebuild_jsonl(con: duckdb.DuckDBPyConnection) -> int:
+    """Rewrite the JSON Lines file from the database, e.g. after a parser change. Returns the line count."""
+    JSONL_PATH.unlink(missing_ok=True)
+    con.execute(JSONL_SCHEMA)
+    con.execute("DELETE FROM jsonl_exported")
+    return append_to_jsonl(con)
+
+
 def main() -> None:
     con = duckdb.connect(str(DB_PATH))
     indexes = [r["disclosure_index"] for r in optional_rows(con, "disclosure_details",
                                                             "SELECT disclosure_index FROM disclosure_details", [])]
     for disclosure_index in indexes:
         write_detail_file(con, disclosure_index)
+    lines = rebuild_jsonl(con)
     total = export_to_excel(con)
     con.close()
     print(f"Detail and JSON files written: {len(indexes)}")
+    print(f"JSON Lines file: {lines} disclosures, {len(indexes) - lines} still waiting for attachments, {JSONL_PATH}")
     print(f"Excel summary: newest {min(total, EXCEL_MAX_ROWS)} of {total} disclosures, {EXCEL_PATH}")
 
 
