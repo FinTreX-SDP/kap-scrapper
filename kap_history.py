@@ -1,17 +1,21 @@
-"""Fetch every KAP disclosure published in a date range: lists, pages, financial statements and attachments.
+"""Fetch the KAP disclosures of the companies in bist100.txt published in a date range: lists, pages,
+financial statements and attachments.
 
 kap_watch.py catches new disclosures live; this script fetches the past. Run one of them at a time,
-as DuckDB allows only one process to write to the database. Pages are fetched newest day first, while a
-background worker reads their attachments, which KAP serves slowly. What is already complete is skipped,
-so running the same command again continues where it stopped. Every disclosure whose page and
-attachments have all been read is appended to data/disclosures.jsonl. Stop with Ctrl+C.
+as DuckDB allows only one process to write to the database. Lists are fetched a month at a time, as KAP
+returns a whole month in one response. Pages are fetched newest day first, several at a time, while
+background workers read their attachments, which KAP serves slowly. What is already complete is skipped, so running the
+same command again continues where it stopped. Every disclosure whose page and attachments have all
+been read is appended to data/disclosures.jsonl. Stop with Ctrl+C.
 
 Usage:
     python kap_history.py --start 01.01.2025 --end 31.12.2025
 """
 import argparse
+import queue
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta
 
 import duckdb
@@ -20,26 +24,34 @@ import httpx
 import kap_attachments
 import kap_details
 import kap_financials
-from kap_disclosures import DATE_FORMAT, HEADERS, SCHEMA, fetch_day, save_to_db
+from kap_disclosures import DATE_FORMAT, HEADERS, SCHEMA, fetch_list, months, save_to_db
+from kap_http import ATTACHMENT_TIMEOUT
 from kap_output import DATA_DIR, DB_PATH, JSONL_PATH, append_to_jsonl, export_to_excel
 from kap_watch import fetch_attachment, fetch_details, log
 
-REQUEST_DELAY = 3  # seconds between requests of each worker; KAP blocks after ~100 requests in a few minutes
+# Requests are spaced out across all threads by kap_http's throttle, so the workers only overlap KAP's
+# slow answers: a page takes 0.4-9 s to come, an attachment several minutes at ~10 KB/s per connection.
+# KAP kept that speed on each of 9 connections at once; 8 attachment workers stay under ~105 KB/s in total.
+PAGE_WORKERS = 4
+ATTACHMENT_WORKERS = 8
 
-LISTED_DAYS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS listed_days (
-    day DATE PRIMARY KEY      -- past day whose complete disclosure list is in the database
-)
-"""
+
+def fetch_page(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
+               disclosure_class: str | None, title: str | None) -> bool:
+    """Fetch one page in a worker thread. Returns False if it failed; it is retried on the next run."""
+    cur = con.cursor()  # DuckDB needs a separate cursor per thread
+    try:
+        fetch_details(cur, client, disclosure_index, disclosure_class, title)
+        return True
+    except Exception as e:
+        log(f"  page {disclosure_index} failed, will retry on the next run: {e!r}")
+        return False
+    finally:
+        cur.close()
 
 
 def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: date) -> None:
-    """Fetch the list of `day` (once for a past day) and the pages of its disclosures that have none yet."""
-    if not con.execute("SELECT count(*) FROM listed_days WHERE day = ?", [day]).fetchone()[0]:
-        save_to_db(con, fetch_day(client, day))
-        if day < date.today():  # today's list still grows
-            con.execute("INSERT INTO listed_days VALUES (?)", [day])
-        time.sleep(REQUEST_DELAY)
+    """Fetch the pages of the disclosures listed for `day` that have none yet, PAGE_WORKERS at a time."""
     todo = con.execute("""
         SELECT disclosure_index, disclosure_class, title FROM disclosures
         WHERE CAST(publish_date AS DATE) = ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)
@@ -48,45 +60,57 @@ def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: d
     if not todo:
         return
     log(f"{day:%d.%m.%Y}: fetching {len(todo)} pages.")
-    failed = 0
-    for disclosure_index, disclosure_class, title in todo:
-        try:
-            fetch_details(con, client, disclosure_index, disclosure_class, title)
-        except Exception as e:  # retried on the next run
-            failed += 1
-            log(f"  page {disclosure_index} failed, will retry on the next run: {e!r}")
-        time.sleep(REQUEST_DELAY)
+    pool = ThreadPoolExecutor(PAGE_WORKERS)
+    futures = [pool.submit(fetch_page, con, client, *job) for job in todo]
+    try:
+        while not all(f.done() for f in futures):
+            wait(futures, timeout=5)  # short, so Ctrl+C is noticed
+    finally:
+        pool.shutdown(cancel_futures=True)  # after Ctrl+C, start no more pages
+    failed = sum(not f.result() for f in futures)
     log(f"{day:%d.%m.%Y}: fetched {len(todo) - failed} pages, {failed} failed.")
 
 
-def attachment_worker(con: duckdb.DuckDBPyConnection, start: date, end: date, pages_done: threading.Event) -> None:
-    """Read unread attachments of disclosures in the range, newest first, as their pages are saved."""
+def read_attachments(con: duckdb.DuckDBPyConnection, jobs: queue.Queue) -> None:
+    """Worker thread: download and read the attachments put in `jobs`."""
     cur = con.cursor()  # DuckDB needs a separate cursor per thread
-    failed = set()  # (disclosure_index, file_id); retried on the next run, not over and over
-    with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
+    with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as client:
         while True:
-            last_round = pages_done.is_set()  # if so, no new attachments can appear after this query
-            todo = [job for job in cur.execute("""
-                SELECT a.disclosure_index, a.file_id, a.file_name, a.url
-                FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
-                WHERE CAST(d.publish_date AS DATE) BETWEEN ? AND ? AND NOT EXISTS (
-                    SELECT 1 FROM attachment_texts t WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)
-                ORDER BY d.publish_date DESC
-            """, [start, end]).fetchall() if job[:2] not in failed]
-            if not todo:
-                if last_round:
-                    return
-                time.sleep(30)  # wait for more pages
-                continue
-            for disclosure_index, file_id, file_name, url in todo:
-                try:
-                    result = fetch_attachment(cur, client, disclosure_index, file_id, url)
-                    log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
-                        f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
-                except Exception as e:
-                    failed.add((disclosure_index, file_id))
-                    log(f"  attachment {disclosure_index} '{file_name}' failed, will retry on the next run: {e!r}")
-                time.sleep(REQUEST_DELAY)
+            disclosure_index, file_id, file_name, url = jobs.get()
+            try:
+                result = fetch_attachment(cur, client, disclosure_index, file_id, url)
+                log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
+                    f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
+            except Exception as e:
+                log(f"  attachment {disclosure_index} '{file_name}' failed, will retry on the next run: {e!r}")
+            finally:
+                jobs.task_done()
+
+
+def attachment_worker(con: duckdb.DuckDBPyConnection, start: date, end: date, pages_done: threading.Event) -> None:
+    """Queue unread attachments of disclosures in the range, newest first, as their pages are saved, for
+    ATTACHMENT_WORKERS threads to read. Returns once all pages are fetched and every queued attachment is done."""
+    cur = con.cursor()  # DuckDB needs a separate cursor per thread
+    jobs: queue.Queue = queue.Queue()
+    for _ in range(ATTACHMENT_WORKERS):
+        threading.Thread(target=read_attachments, args=(con, jobs), daemon=True).start()
+    queued = set()  # (disclosure_index, file_id) queued in this run; one that fails is retried on the next run
+    while True:
+        last_round = pages_done.is_set()  # if so, no new attachments can appear after this query
+        for job in cur.execute("""
+            SELECT a.disclosure_index, a.file_id, a.file_name, a.url
+            FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
+            WHERE CAST(d.publish_date AS DATE) BETWEEN ? AND ? AND NOT EXISTS (
+                SELECT 1 FROM attachment_texts t WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)
+            ORDER BY d.publish_date DESC
+        """, [start, end]).fetchall():
+            if job[:2] not in queued:
+                queued.add(job[:2])
+                jobs.put(job)
+        if last_round:
+            jobs.join()
+            return
+        time.sleep(30)  # wait for more pages
 
 
 def parse_day(text: str) -> date:
@@ -94,7 +118,7 @@ def parse_day(text: str) -> date:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fetch every KAP disclosure published in a date range.")
+    parser = argparse.ArgumentParser(description="Fetch the KAP disclosures of the watched companies in a date range.")
     parser.add_argument("--start", metavar="DD.MM.YYYY", type=parse_day, required=True, help="first day")
     parser.add_argument("--end", metavar="DD.MM.YYYY", type=parse_day, required=True, help="last day")
     args = parser.parse_args()
@@ -107,7 +131,6 @@ def main() -> None:
     con.execute(kap_details.SCHEMA)
     con.execute(kap_attachments.SCHEMA)
     con.execute(kap_financials.SCHEMA)
-    con.execute(LISTED_DAYS_SCHEMA)
     kap_attachments.skip_unwanted(con)
 
     pages_done = threading.Event()
@@ -118,14 +141,19 @@ def main() -> None:
     appended = 0
     try:
         with httpx.Client(headers=HEADERS, http2=True, timeout=60) as client:
-            day = args.end
-            while day >= args.start:
+            for first, last in months(args.start, args.end):
                 try:
+                    disclosures = fetch_list(client, first, last)
+                except Exception as e:  # the month is tried again on the next run
+                    log(f"List of {first:%d.%m.%Y}-{last:%d.%m.%Y} failed, will retry on the next run: {e!r}")
+                    continue
+                save_to_db(con, disclosures)
+                log(f"{first:%d.%m.%Y}-{last:%d.%m.%Y}: {len(disclosures)} disclosures of the watched companies.")
+                day = last
+                while day >= first:
                     fetch_day_pages(con, client, day)
-                except Exception as e:  # e.g. the list request failed; the day is tried again on the next run
-                    log(f"{day:%d.%m.%Y} failed, will retry on the next run: {e!r}")
-                appended += append_to_jsonl(con)
-                day -= timedelta(days=1)
+                    appended += append_to_jsonl(con)
+                    day -= timedelta(days=1)
         pages_done.set()
         log("All pages fetched; waiting for the remaining attachments.")
         while worker.is_alive():

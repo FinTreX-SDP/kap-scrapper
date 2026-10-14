@@ -1,0 +1,110 @@
+# Companies whose KAP disclosures are collected, one per line, stock code first.
+# A disclosure is collected when one of these codes is its stock code or one of its related stocks.
+# Lines starting with # are ignored.
+
+AEFES   - Anadolu Efes Biracılık ve Malt Sanayii A.Ş.
+AGHOL   - AG Anadolu Grubu Holding A.Ş.
+AHGAZ   - Ahlatcı Doğal Gaz Dağıtım Enerji ve Yatırım A.Ş.
+AKBNK   - Akbank T.A.Ş.
+AKCNS   - Akçansa Çimento Sanayi ve Ticaret A.Ş.
+AKFYE   - Akfen Yenilenebilir Enerji A.Ş.
+AKSA    - Aksa Akrilik Kimya Sanayii A.Ş.
+AKSEN   - Aksa Enerji Üretim A.Ş.
+ALARK   - Alarko Holding A.Ş.
+ALBRK   - Albaraka Türk Katılım Bankası A.Ş.
+ALTNY   - Altınay Savunma Teknolojileri A.Ş.
+ANHYT   - Anadolu Hayat Emeklilik A.Ş.
+ANSGR   - Anadolu Anonim Türk Sigorta Şirketi
+ARCLK   - Arçelik A.Ş.
+ASELS   - Aselsan Elektronik Sanayi ve Ticaret A.Ş.
+ASTOR   - Astor Enerji A.Ş.
+AYGAZ   - Aygaz A.Ş.
+BERA    - Bera Holding A.Ş.
+BIMAS   - Bim Birleşik Mağazalar A.Ş.
+BINHO   - 1000 Yatırımlar Holding A.Ş.
+BRSAN   - Borusan Birleşik Boru Fabrikaları San. ve Tic. A.Ş.
+BRYAT   - Borusan Yatırım ve Pazarlama A.Ş.
+BTCIM   - Batıçim Batı Anadolu Çimento Sanayii A.Ş.
+CANTE   - Çan2 Termik A.Ş.
+CCOLA   - Coca-Cola İçecek A.Ş.
+CIMSA   - Çimsa Çimento Sanayi ve Ticaret A.Ş.
+CVKMD   - CVK Maden İşletmeleri San. ve Tic. A.Ş.
+CWENE   - CW Enerji Mühendislik Ticaret ve Sanayi A.Ş.
+DOAS    - Doğuş Otomotiv Servis ve Ticaret A.Ş.
+DOHOL   - Doğan Şirketler Grubu Holding A.Ş.
+ECILC   - Eczacıbaşı İlaç Sınai ve Finansal Yatırımlar San. ve Tic. A.Ş.
+ECZYT   - Eczacıbaşı Yatırım Holding Ortaklığı A.Ş.
+EGEEN   - Ege Endüstri ve Ticaret A.Ş.
+EGGUB   - Ege Gübre Sanayii A.Ş.
+EKGYO   - Emlak Konut Gayrimenkul Yatırım Ortaklığı A.Ş.
+ENERY   - Enerya Enerji A.Ş.
+ENJSA   - Enerjisa Enerji A.Ş.
+ENKAI   - Enka İnşaat ve Sanayi A.Ş.
+ENTRA   - IC Enterra Yenilenebilir Enerji A.Ş.
+EREGL   - Ereğli Demir ve Çelik Fabrikaları T.A.Ş.
+EUREN   - Europen Endüstri İnşaat Sanayi ve Ticaret A.Ş.
+FENER   - Fenerbahçe Futbol A.Ş.
+FROTO   - Ford Otomotiv Sanayi A.Ş.
+GARAN   - Türkiye Garanti Bankası A.Ş.
+GLRMK   - Gülermak Ağır Sanayi İnşaat ve Taahhüt A.Ş.
+GLYHO   - Global Yatırım Holding A.Ş.
+GRSEL   - Gür-Sel Turizm Taşımacılık ve Servis Ticaret A.Ş.
+GUBRF   - Gübre Fabrikaları T.A.Ş.
+GWIND   - Galata Wind Enerji A.Ş.
+HALKB   - Türkiye Halk Bankası A.Ş.
+HEKTS   - Hektaş Ticaret T.A.Ş.
+ISCTR   - Türkiye İş Bankası A.Ş. (C)
+ISDMR   - İskenderun Demir ve Çelik A.Ş.
+ISMEN   - İş Yatırım Menkul Değerler A.Ş.
+KARSN   - Karsan Otomotiv Sanayii ve Ticaret A.Ş.
+KATMR   - Katmerciler Araç Üstü Ekipman Sanayi ve Ticaret A.Ş.
+KCAER   - Kocaer Çelik Sanayi ve Ticaret A.Ş.
+KCHOL   - Koç Holding A.Ş.
+KORDS   - Kordsa Teknik Tekstil A.Ş.
+KRDMD   - Kardemir Karabük Demir Çelik Sanayi ve Ticaret A.Ş. (D)
+LMKDC   - Limak Doğu Anadolu Çimento Sanayi ve Ticaret A.Ş.
+MAVI    - Mavi Giyim Sanayi ve Ticaret A.Ş.
+MGROS   - Migros Ticaret A.Ş.
+MPARK   - MLP Sağlık Hizmetleri A.Ş.
+OBAMS   - Oba Makarnacılık Sanayi ve Ticaret A.Ş.
+ODAS    - Odaş Elektrik Üretim Sanayi Ticaret A.Ş.
+OTKAR   - Otokar Otomotiv ve Savunma Sanayi A.Ş.
+OYAKC   - Oyak Çimento Fabrikaları A.Ş.
+PAHOL   - Pasifik Holding A.Ş.
+PETKM   - Petkim Petrokimya Holding A.Ş.
+PGSUS   - Pegasus Hava Taşımacılığı A.Ş.
+RGYAS   - Rönesans Gayrimenkul Yatırım A.Ş.
+RYSAS   - Reysaş Taşımacılık ve Lojistik Ticaret A.Ş.
+SAHOL   - Hacı Ömer Sabancı Holding A.Ş.
+SASA    - SASA Polyester Sanayi A.Ş.
+SISE    - Türkiye Şişe ve Cam Fabrikaları A.Ş.
+SNGYO   - Sinpaş Gayrimenkul Yatırım Ortaklığı A.Ş.
+SOKM    - Şok Marketler Ticaret A.Ş.
+TABGD   - TAB Gıda Sanayi ve Ticaret A.Ş.
+TAVHL   - TAV Havalimanları Holding A.Ş.
+TCELL   - Turkcell İletişim Hizmetleri A.Ş.
+TCKRC   - Tatlıpınar Enerji Üretim A.Ş.
+THYAO   - Türk Hava Yolları A.O.
+TKFEN   - Tekfen Holding A.Ş.
+TOASO   - Tofaş Türk Otomobil Fabrikası A.Ş.
+TRALT   - Türk Altın İşletmeleri / Madencilik A.Ş.
+TRENJ   - Trenj Enerji A.Ş.
+TRGYO   - Torunlar Gayrimenkul Yatırım Ortaklığı A.Ş.
+TRMET   - Terametal / Türk Metal Sanayi A.Ş.
+TSKB    - Türkiye Sınai Kalkınma Bankası A.Ş.
+TTKOM   - Türk Telekomünikasyon A.Ş.
+TTRAK   - Türk Traktör ve Ziraat Makineleri A.Ş.
+TUKAS   - Tukaş Gıda Sanayi ve Ticaret A.Ş.
+TUPRS   - Türkiye Petrol Rafinerileri A.Ş. (Tüpraş)
+TURSG   - Türkiye Sigorta A.Ş.
+ULKER   - Ülker Bisküvi Sanayi A.Ş.
+VAKBN   - Türkiye Vakıflar Bankası T.A.O.
+VESTL   - Vestel Elektronik Sanayi ve Ticaret A.Ş.
+YKBNK   - Yapı ve Kredi Bankası A.Ş.
+ZOREN   - Zorlu Enerji Elektrik Üretim A.Ş.
+
+# Former codes of the companies above. A company's own disclosures always carry its current code,
+# but other members' disclosures name it as a related stock by the code it had at the time.
+IPEKE   - former code of TRENJ (İpek Doğal Enerji)
+KOZAA   - former code of TRMET (Koza Anadolu Metal)
+KOZAL   - former code of TRALT (Koza Altın)

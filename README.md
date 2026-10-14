@@ -1,6 +1,6 @@
 # KAP Scraper
 
-[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
+[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Yalnızca `bist100.txt` dosyasındaki şirketlerle ilgili bildirimleri alır. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
 
 > Resmî değildir. KAP sitesinin kendi kullandığı, belgelenmemiş uç noktaları okur. İstek sıklığını düşük tutun.
 
@@ -8,7 +8,7 @@
 
 Her bildirim için aynı adımlar izlenir:
 
-1. **Liste.** Günün bildirim listesi KAP'tan çekilir. Fon bildirimleri hariçtir.
+1. **Liste.** Bildirim listesi KAP'tan çekilir ve hemen süzülür. Yalnızca [listedeki şirketlerle](#şirket-listesi) ilgili bildirimler kalır; diğerleri veritabanına yazılmaz, sayfaları da hiç istenmez. Fon bildirimleri hariçtir.
 2. **Sayfa.** Bildirimin sayfası çekilir. Metni, alanları ve tabloları ayrıştırılır.
 3. **Mali tablolar.** Finansal raporlarda bilanço, gelir tablosu, nakit akış ve özkaynak tabloları sayısal değerler olarak çıkarılır.
 4. **Ekler.** Sadece değerli türlerin ekleri indirilir ve metni çıkarılır. Taranmış belgeler OCR ile okunur. Ayrıntılar: [Hangi ekler okunur](#hangi-ekler-okunur).
@@ -58,7 +58,7 @@ python kap_history.py --start 01.01.2025 --end 31.12.2025
 - **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Günler bitişten başlangıca doğru işlenir.
 - **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; tamamlananları atlar, kaldığı yerden devam eder. Hata alan sayfa ve ekler de o zaman yeniden denenir.
 - **Bitiş.** Aralık bitince kendiliğinden kapanır.
-- **Süre.** KAP'ın istek sınırı yüzünden yavaştır. Bir sayfa 5 ile 9 saniye sürer. İş günü başına yaklaşık 330 bildirim olduğu için bir gün yarım saat ile bir saat arası sürer. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
+- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar alır: KAP'ın istek sınırı yüzünden bir sayfa, bekleme dahil ortalama 6 saniye sürer. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı, yani bir ay yaklaşık 2 saat sürer. Ekler arka planda bu sırada okunur. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
 
 ### Bakım komutları
 
@@ -93,15 +93,33 @@ Bir kaydın alanları:
 | `publish_date`, `stock_code`, `company_title` | Yayın zamanı, hisse kodu, şirket |
 | `title`, `summary` | Bildirim türü, örneğin "Özel Durum Açıklaması (Genel)", ve özeti |
 | `disclosure_class` | `ODA` özel durum açıklaması, `FR` finansal rapor, `DUY` duyuru, `DG` diğer |
+| `related_disclosure_oid` | Bu bildirimin devamı, güncellemesi ya da düzeltmesi olduğu önceki bildirimin `disclosure_id` değeri |
+| `is_changed` | Güncellenen bildirimde `DUZENLENEN`, düzeltilen bildirimde `DUZELTILEN`, ilk bildirimde boş |
+| `mkk_member_oid` | KAP'ın şirket kimliği. Hisse kodu değişse de aynı kalır |
+| `term`, `has_multi_language_support` | Finansal raporun çeyreği; bildirimin İngilizcesi de varsa `Y` |
 | `text` | Sayfanın tam metni |
-| `fields`, `tables` | Sayfadaki etiket-değer alanları ve tablolar |
+| `fields`, `tables` | Sayfadaki etiket-değer alanları ve tablolar. Finansal raporlarda `fields` boştur, çünkü sayfadaki alanların hepsi `financial_statements` içinde vardır |
 | `financial_statements` | Finansal raporların mali tabloları. Her değerin XBRL kavramı, dönemi ve para birimi vardır |
 | `attachments` | Ekler: adı, bağlantısı ve okunduysa `text` ile `tables`. Atlanan eklerde `file_type` `skipped` olur, `text` boştur |
+
+## Şirket listesi
+
+Bildirimleri toplanan şirketler `bist100.txt` dosyasındadır. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar okunmaz.
+
+Bir bildirim iki durumda alınır:
+
+- Listedeki bir şirketin kendi bildirimiyse.
+- Başka bir kurumun bildirimi listedeki bir şirketi "ilgili hisse" olarak anıyorsa. Örneğin Borsa İstanbul'un devre kesici bildirimleri, Takasbank duyuruları ve derecelendirme kuruluşlarının kredi notları.
+
+Kodu değişen şirketlerin eski kodları da listede durmalıdır. KAP, şirketin kendi bildirimlerinde eski tarihli olsalar bile güncel kodu verir. Başka kurumların bildirimlerinde ise o günkü kod yazar. Örneğin Türk Altın (TRALT), eski bildirimlerde KOZAL olarak geçer.
+
+Listeye şirket eklerseniz geçmiş komutunu yeniden çalıştırmanız yeterlidir. Listeler her çalıştırmada KAP'tan yeniden alındığı için yeni şirketlerin bildirimleri de çekilir. Listeden çıkarılan şirketlerin toplanmış bildirimleri silinmez.
 
 ## Hangi ekler okunur
 
 Eklerin çoğu ya sayfada zaten yazılanın resmî belgesidir ya da faaliyet raporu gibi uzun, rutin raporlardır. Bu yüzden ekler sadece şu bildirim türlerinde okunur:
 
+- **Finansal Rapor** ve **Finansal Rapor Bildirimi:** dipnotlar ve bağımsız denetçi raporu. Sayfada yalnızca mali tablolar vardır, gerisi PDF'tedir. PDF'teki mali tablo sayfaları sayfadakilerle aynıdır; tüm dosya okunur
 - **Özel Durum Açıklaması (Genel):** yatırımcı sunumları, finansal sonuç notları, beklenti güncellemeleri
 - **Kredi Derecelendirmesi**
 - **Değerleme Raporu**
@@ -113,6 +131,7 @@ Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi i
 ## Dosyalar
 
 ```text
+bist100.txt           Bildirimleri toplanan şirketler
 kap_watch.py          Canlı izleyici
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
 kap_disclosures.py    Bildirim listesini çeker
@@ -125,8 +144,8 @@ kap_http.py           KAP'ın istek sınırına karşı bekleme ve yeniden denem
 
 ## Bilinmesi gerekenler
 
-- **İstek sınırı.** KAP birkaç dakikada yaklaşık 100 istekten sonra geçici olarak engeller. Betikler bunu bekleyip kendiliğinden devam eder. Ekranda sık sık `KAP rate limit hit` görürseniz `kap_history.py` içindeki `REQUEST_DELAY` değerini artırın.
-- **Yavaş indirmeler.** KAP ekleri bazen çok yavaş verir. 180 saniyede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
+- **İstek sınırı.** KAP birkaç dakikada yaklaşık 100 istekten sonra geçici olarak engeller. Geçmiş komutu sayfaları 4, ekleri 8 işçiyle aynı anda çeker. İstekler ise tüm işçiler için ortak bir sırayla, en az 1,5 saniye arayla başlar. KAP engellerse herkes 5 dakika bekler, sonra istekler 1,5 kat daha seyrek gönderilir. Başlangıç aralığı `kap_http.py` içindeki `REQUEST_INTERVAL` değeridir, işçi sayıları `kap_history.py` içindedir.
+- **Yavaş indirmeler.** KAP ekleri her bağlantıya saniyede yaklaşık 10-15 KB ile verir. Bu yüzden her ekin indirilmesine boyutuna göre süre tanınır: en az 180 saniye, büyük dosyalarda saniyede 4 KB'a göre gereken süre. Örneğin bir bankanın 4,7 MB'lık finansal raporuna yaklaşık 19 dakika tanınır. KAP bazen dosyanın ortasında veri göndermeyi bırakır. 30 saniye hiç veri gelmezse indirme kesilip baştan denenir. Bu sürede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
 - **Kilit hatası.** `Could not set lock on file ... kap.duckdb` hatası, veritabanının başka bir süreçte açık olduğunu gösterir. Önce o süreci durdurun.
 - **Türkçe karakterler bozuksa** PowerShell'de `$env:PYTHONIOENCODING = "utf-8"` ayarlayın.
 - **KAP değişebilir.** Ayrıştırıcılar KAP'ın Ekim 2026'daki sayfa düzenine göre yazıldı.

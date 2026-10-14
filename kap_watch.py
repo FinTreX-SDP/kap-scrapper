@@ -1,4 +1,5 @@
-"""Watch KAP for new disclosures and fetch their details and attachments as soon as they appear.
+"""Watch KAP for new disclosures of the companies in bist100.txt and fetch their details and attachments
+as soon as they appear.
 
 Polls the disclosure list every POLL_INTERVAL seconds. Details are fetched right away; attachments
 (which may need slow OCR) are handled by a background worker so they never delay new disclosures.
@@ -22,8 +23,8 @@ import httpx
 import kap_attachments
 import kap_details
 import kap_financials
-from kap_disclosures import HEADERS, REQUEST_DELAY, SCHEMA, fetch_day, save_to_db
-from kap_http import RateLimited, kap_get
+from kap_disclosures import HEADERS, REQUEST_DELAY, SCHEMA, fetch_list, save_to_db
+from kap_http import ATTACHMENT_TIMEOUT, RateLimited, kap_get
 from kap_output import DATA_DIR, DB_PATH, append_to_jsonl, export_to_excel, write_detail_file
 
 POLL_INTERVAL = 15  # seconds
@@ -63,7 +64,7 @@ def fetch_attachment(con: duckdb.DuckDBPyConnection, client: httpx.Client, discl
 
 def attachment_worker(con: duckdb.DuckDBPyConnection, jobs: queue.Queue, changed: threading.Event) -> None:
     cur = con.cursor()  # DuckDB needs a separate cursor per thread
-    with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
+    with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as client:
         while True:
             disclosure_index, file_id, file_name, url = jobs.get()
             try:
@@ -94,9 +95,8 @@ def queue_missing_attachments(con: duckdb.DuckDBPyConnection, jobs: queue.Queue,
 def poll(con: duckdb.DuckDBPyConnection, client: httpx.Client, since: datetime) -> list[tuple]:
     """Save the latest list and return new disclosures that still need details."""
     now = datetime.now()
-    days = {now.date(), (now - timedelta(seconds=2 * POLL_INTERVAL)).date()}  # both days around midnight
-    for day in sorted(days):
-        save_to_db(con, fetch_day(client, day))
+    start = (now - timedelta(seconds=2 * POLL_INTERVAL)).date()  # yesterday too, just after midnight
+    save_to_db(con, fetch_list(client, start, now.date()))
     return con.execute("""
         SELECT disclosure_index, publish_date, stock_code, title, disclosure_class FROM disclosures
         WHERE publish_date >= ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)

@@ -34,7 +34,7 @@ from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
 from kap_disclosures import HEADERS, REQUEST_DELAY
-from kap_http import RateLimited, kap_get
+from kap_http import ATTACHMENT_TIMEOUT, RateLimited, file_size, kap_get
 from kap_output import DB_PATH, export_to_excel, write_detail_file
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -49,10 +49,13 @@ MIN_TABLE_CELLS = 4  # fewer enclosed cells is a framed box or underline, not a 
 ROW_TOLERANCE = 15  # px; cells whose tops are this close belong to the same row
 
 # Disclosure types (the `title` column of disclosures) whose attachments are read. These attachments hold
-# what the disclosure page lacks, such as investor presentations and earnings releases. Other types'
+# what the disclosure page lacks, such as investor presentations and earnings releases. A financial report's
+# page holds only the statements; its PDF adds the notes and the auditor's report. Other types'
 # attachments are mostly the formal documents behind what the page already says, or long routine reports,
 # so they are listed but not downloaded.
 EXTRACT_TYPES = (
+    "Finansal Rapor",
+    "Finansal Rapor Bildirimi",
     "Özel Durum Açıklaması (Genel)",
     "Kredi Derecelendirmesi",
     "Değerleme Raporu",
@@ -161,14 +164,10 @@ def extract_pdf(data: bytes) -> dict:
             "skipped_pages": skipped, "text": "\n\n".join(parts), "tables": tables}
 
 
-JAVA_BYTE_ARRAY_HEADER = b"\xac\xed\x00\x05ur\x00\x02[B"  # Java-serialized byte[] prefix
-
-
 def unwrap(data: bytes) -> bytes:
     """KAP wraps files in a serialized Java byte[]: 23-byte header, 4-byte length, then the file."""
-    if data.startswith(JAVA_BYTE_ARRAY_HEADER):
-        length = int.from_bytes(data[23:27], "big")
-        return data[27:27 + length]
+    if (size := file_size(data)) is not None:
+        return data[27:27 + size]
     return data
 
 
@@ -305,7 +304,7 @@ def main() -> None:
 
     done, failed = 0, []
     try:
-        with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
+        with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as client:
             for disclosure_index, file_id, url in tqdm(todo, desc="Attachments"):
                 try:
                     save(con, disclosure_index, file_id, extract(kap_get(client, url)))
