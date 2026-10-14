@@ -30,11 +30,6 @@ ECZYT   - Eczacıbaşı Yatırım Holding Ortaklığı A.Ş.
 GLYHO   - Global Yatırım Holding A.Ş.
 BRYAT   - Borusan Yatırım ve Pazarlama A.Ş.
 
-# Madencilik
-TRALT   - Türk Altın İşletmeleri A.Ş.
-TRMET   - TR Anadolu Metal Madencilik İşletmeleri A.Ş.
-TRENJ   - TR Doğal Enerji Kaynakları Araştırma ve Üretim A.Ş.
-
 # Bilişim ve yazılım
 LOGO    - Logo Yazılım Sanayi ve Ticaret A.Ş.
 MIATK   - Mia Teknoloji A.Ş.
@@ -137,9 +132,3 @@ MPARK   - MLP Sağlık Hizmetleri A.Ş.
 ECILC   - Eczacıbaşı İlaç Sınai ve Finansal Yatırımlar San. ve Tic. A.Ş.
 SELEC   - Selçuk Ecza Deposu Ticaret ve Sanayi A.Ş.
 DEVA    - Deva Holding A.Ş.
-
-# Former codes of the companies above. A company's own disclosures always carry its current code,
-# but other members' disclosures name it as a related stock by the code it had at the time.
-IPEKE   - former code of TRENJ (İpek Doğal Enerji)
-KOZAA   - former code of TRMET (Koza Anadolu Metal)
-KOZAL   - former code of TRALT (Koza Altın)
