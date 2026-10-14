@@ -31,9 +31,12 @@ from kap_watch import fetch_attachment, fetch_details, log
 
 # Requests are spaced out across all threads by kap_http's throttle, so the workers only overlap KAP's
 # slow answers: a page takes 0.4-9 s to come, an attachment several minutes at ~10 KB/s per connection.
-# KAP kept that speed on each of 9 connections at once; 8 attachment workers stay under ~105 KB/s in total.
-PAGE_WORKERS = 4
-ATTACHMENT_WORKERS = 8
+# KAP kept 10-30 KB/s on each of 12 connections at once without a stall (~230 KB/s in total), which is
+# about all the line takes; more attachment workers would only share it. 6 page workers already keep up
+# with kap_http's 1.5 s interval; more would only open more connections, and KAP's firewall blocked the
+# IP when 10 page workers sent requests 1.22 s apart.
+PAGE_WORKERS = 6
+ATTACHMENT_WORKERS = 12
 
 
 def fetch_page(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
