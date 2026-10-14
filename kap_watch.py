@@ -1,4 +1,4 @@
-"""Watch KAP for new disclosures of the companies in bist100.txt and fetch their details and attachments
+"""Watch KAP for new disclosures of the companies in companies.txt and fetch their details and attachments
 as soon as they appear.
 
 Polls the disclosure list every POLL_INTERVAL seconds. Details are fetched right away; attachments

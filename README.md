@@ -1,6 +1,6 @@
 # KAP Scraper
 
-[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Yalnızca `bist100.txt` dosyasındaki şirketlerle ilgili bildirimleri alır. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
+[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Yalnızca `companies.txt` dosyasındaki şirketlerle ilgili bildirimleri alır. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
 
 > Resmî değildir. KAP sitesinin kendi kullandığı, belgelenmemiş uç noktaları okur. İstek sıklığını düşük tutun.
 
@@ -104,7 +104,7 @@ Bir kaydın alanları:
 
 ## Şirket listesi
 
-Bildirimleri toplanan şirketler `bist100.txt` dosyasındadır, sektörlere göre gruplanmış hâlde. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar, sektör başlıkları dahil, okunmaz.
+Bildirimleri toplanan şirketler `companies.txt` dosyasındadır, sektörlere göre gruplanmış hâlde. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar, sektör başlıkları dahil, okunmaz.
 
 Bir bildirim iki durumda alınır:
 
@@ -131,7 +131,7 @@ Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi i
 ## Dosyalar
 
 ```text
-bist100.txt           Bildirimleri toplanan şirketler
+companies.txt         Bildirimleri toplanan şirketler
 kap_watch.py          Canlı izleyici
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
 kap_disclosures.py    Bildirim listesini çeker

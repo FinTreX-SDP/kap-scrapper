@@ -1,4 +1,4 @@
-"""Fetch the KAP disclosures of the companies in bist100.txt published in a date range: lists, pages,
+"""Fetch the KAP disclosures of the companies in companies.txt published in a date range: lists, pages,
 financial statements and attachments.
 
 kap_watch.py catches new disclosures live; this script fetches the past. Run one of them at a time,

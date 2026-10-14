@@ -1,6 +1,6 @@
 """Fetch the KAP disclosure list, store it in DuckDB and update the Excel summary.
 
-Only disclosures that concern a company in bist100.txt are kept: as soon as a list arrives, the
+Only disclosures that concern a company in companies.txt are kept: as soon as a list arrives, the
 others are dropped, so they never reach the database and their pages are never requested.
 
 Usage:
@@ -32,11 +32,11 @@ HEADERS = {
 }
 DATE_FORMAT = "%d.%m.%Y"
 REQUEST_DELAY = 1.0  # seconds between requests, to keep the load on KAP low
-WATCHLIST_PATH = Path(__file__).parent / "bist100.txt"
+WATCHLIST_PATH = Path(__file__).parent / "companies.txt"
 
 
 def load_watchlist() -> set[str]:
-    """Stock codes in bist100.txt: the first word of each line that is neither empty nor a # comment."""
+    """Stock codes in companies.txt: the first word of each line that is neither empty nor a # comment."""
     lines = WATCHLIST_PATH.read_text(encoding="utf-8").splitlines()
     return {line.split()[0] for line in lines if line.strip() and not line.startswith("#")}
 
