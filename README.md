@@ -104,7 +104,7 @@ Bir kaydın alanları:
 
 ## Şirket listesi
 
-Bildirimleri toplanan şirketler `bist100.txt` dosyasındadır. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar okunmaz.
+Bildirimleri toplanan şirketler `bist100.txt` dosyasındadır, sektörlere göre gruplanmış hâlde. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar, sektör başlıkları dahil, okunmaz.
 
 Bir bildirim iki durumda alınır:
 
