@@ -59,6 +59,26 @@ Bu komut canlı izleyiciyi arka planda başlatır. Çıktılar yine projedeki `d
 - **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. Veritabanını ikisi aynı anda kullanamaz.
 - [Bakım komutları](#bakım-komutları) da aynı şekilde çalışır, örneğin `docker compose run --rm kap python kap_output.py`.
 
+## Apify ile geçmiş
+
+Geçmiş komutu [Apify](https://apify.com) üzerinde de çalışır, bilgisayarın açık kalması gerekmez. Canlı izleyici Apify'da çalışmaz; onu Docker ile çalıştırın.
+
+İlk kurulum (Node.js gerekir):
+
+```powershell
+npx apify-cli login   # Apify Console > Settings > API & Integrations sayfasındaki token ile
+npx apify-cli push    # Actor'ı Apify'da oluşturur ya da günceller
+```
+
+Ardından Apify Console'da **KAP history** Actor'ını açın, başlangıç ve bitiş günlerini `GG.AA.YYYY` biçiminde girip **Start**'a basın.
+
+- **Sonuç.** Bildirimler `kap-disclosures` adlı Dataset'te toplanır (Storage > Datasets). Her kayıt `disclosures.jsonl` dosyasındaki bir satırla aynıdır. Console'dan JSON, CSV ya da Excel olarak indirilebilir.
+- **Devam etme.** Dataset'te olan bildirimler atlanır. Yarıda kalan bir aralığı yeniden çalıştırmak kaldığı yerden devam eder.
+- **Veritabanı yok.** Run'ın diski küçüktür ve run bitince silinir. Bu yüzden her ay ayrı, geçici bir veritabanıyla işlenir. Apify'da yalnızca Dataset kalır, ham sayfalar saklanmaz.
+- **Süre sınırı.** Apify run'ı varsayılan olarak 1 saatte durdurur. Uzun aralıklar için Start'tan önce Run options > Timeout değerini artırın (0 sınırsız demektir). Süre dolup kesilen run, aynı aralıkla yeniden çalıştırılınca devam eder.
+- **Maliyet.** 1 GB bellekle her saat 1 compute unit (yaklaşık 0,20 $) harcanır. Bir ay yaklaşık 2 saat sürer. 08.10.2026 testi (29 bildirim) 77 saniye sürdü, en fazla 288 MB bellek kullandı ve 0,004 $ tuttu.
+- **Kod ya da `companies.txt` değişince** `npx apify-cli push` ile yeniden yükleyin.
+
 ## Kullanım
 
 Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yalnızca bir süreç kullanabilir. İkisi de Ctrl+C ile durdurulur.
@@ -156,6 +176,8 @@ Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi i
 companies.txt         Bildirimleri toplanan şirketler
 kap_watch.py          Canlı izleyici
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
+kap_apify.py          Apify'da geçmiş: kap_history.py'yi ay ay çalıştırır, sonuçları Dataset'e yazar
+.actor/               Apify Actor tanımı ve giriş formu
 kap_disclosures.py    Bildirim listesini çeker
 kap_details.py        Bildirim sayfasını çeker ve ayrıştırır
 kap_financials.py     Finansal raporlardan mali tabloları çıkarır

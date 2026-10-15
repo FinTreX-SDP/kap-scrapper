@@ -23,3 +23,6 @@ pyarrow>=15.0.0
 tenacity>=8.2.3
 python-dotenv>=1.0.1
 tqdm>=4.66.0
+
+# Apify platformu (kap_apify.py)
+apify>=4.1.0

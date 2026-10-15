@@ -26,7 +26,7 @@ import kap_details
 import kap_financials
 from kap_disclosures import DATE_FORMAT, HEADERS, SCHEMA, fetch_list, months, save_to_db
 from kap_http import ATTACHMENT_TIMEOUT
-from kap_output import DATA_DIR, DB_PATH, JSONL_PATH, append_to_jsonl, export_to_excel
+from kap_output import DATA_DIR, DB_PATH, JSONL_PATH, JSONL_SCHEMA, append_to_jsonl, export_to_excel
 from kap_watch import fetch_attachment, fetch_details, log
 
 # Requests are spaced out across all threads by kap_http's throttle, so the workers only overlap KAP's
@@ -58,6 +58,7 @@ def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: d
     todo = con.execute("""
         SELECT disclosure_index, disclosure_class, title FROM disclosures
         WHERE CAST(publish_date AS DATE) = ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)
+          AND disclosure_index NOT IN (SELECT disclosure_index FROM jsonl_exported)  -- kap_apify.py fills only this
         ORDER BY publish_date DESC
     """, [day]).fetchall()
     if not todo:
@@ -134,6 +135,7 @@ def main() -> None:
     con.execute(kap_details.SCHEMA)
     con.execute(kap_attachments.SCHEMA)
     con.execute(kap_financials.SCHEMA)
+    con.execute(JSONL_SCHEMA)
     kap_attachments.skip_unwanted(con)
 
     pages_done = threading.Event()

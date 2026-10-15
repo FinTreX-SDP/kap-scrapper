@@ -1,0 +1,25 @@
+{
+  "title": "KAP history",
+  "description": "Fetches the disclosures published from start to end, both days included. Disclosures already in the dataset kap-disclosures are skipped, so the same range can be run again to continue.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "start": {
+      "title": "Start",
+      "type": "string",
+      "description": "First day, DD.MM.YYYY",
+      "editor": "textfield",
+      "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+      "prefill": "08.10.2026"
+    },
+    "end": {
+      "title": "End",
+      "type": "string",
+      "description": "Last day, DD.MM.YYYY",
+      "editor": "textfield",
+      "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+      "prefill": "08.10.2026"
+    }
+  },
+  "required": ["start", "end"]
+}

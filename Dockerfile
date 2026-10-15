@@ -19,4 +19,5 @@ COPY *.py companies.txt ./
 
 # Same as Ctrl+C, so `docker stop` lets the scripts write their outputs and close the database.
 STOPSIGNAL SIGINT
-CMD ["python", "kap_watch.py"]
+# Apify runs the image as it is; compose.yaml starts the watcher instead.
+CMD ["python", "kap_apify.py"]

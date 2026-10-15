@@ -1,0 +1,9 @@
+{
+  "actorSpecification": 1,
+  "name": "kap-history",
+  "title": "KAP history",
+  "description": "Fetches the KAP disclosures of the companies in companies.txt published in a date range into the dataset kap-disclosures.",
+  "version": "0.1",
+  "input": "./input_schema.json",
+  "defaultMemoryMbytes": 1024
+}
