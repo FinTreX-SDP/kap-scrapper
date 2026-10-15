@@ -1,0 +1,7 @@
+services:
+  kap:
+    build: .
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 1m

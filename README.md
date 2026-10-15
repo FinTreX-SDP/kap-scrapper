@@ -37,6 +37,28 @@ Ardından `.env` dosyasında iki yolu doldurun:
 - `TESSERACT_CMD`: `tesseract.exe` dosyasının tam yolu, genelde `C:\Program Files\Tesseract-OCR\tesseract.exe`.
 - `TESSDATA_PREFIX`: projedeki `tessdata` klasörünün tam yolu.
 
+## Docker ile kurulum
+
+Gereksinim: Docker Desktop. Tesseract, Türkçe OCR dosyası ve Türkiye saati image'ın içindedir; `.env` ve `tessdata` gerekmez.
+
+```powershell
+docker compose up -d --build
+```
+
+Bu komut canlı izleyiciyi arka planda başlatır. Çıktılar yine projedeki `data/` klasörüne yazılır.
+
+| Komut | Ne yapar |
+|---|---|
+| `docker compose logs -f` | İzleyicinin çıktısını gösterir |
+| `docker compose stop` | İzleyiciyi durdurur. Ctrl+C gibidir, çıktılar yazılıp kapanır |
+| `docker compose start` | İzleyiciyi yeniden başlatır |
+| `docker compose run --rm kap python kap_history.py --start 01.01.2025 --end 31.12.2025` | Geçmiş. Önce izleyiciyi durdurun |
+
+- **Otomatik başlama.** Siz durdurmadıkça izleyici, çökerse ve Docker Desktop her açıldığında kendiliğinden başlar. Bilgisayar açılınca çalışması için Docker Desktop ayarlarında "Start Docker Desktop when you sign in" seçili olmalı.
+- **Kod ya da `companies.txt` değişince** `docker compose up -d --build` ile image'ı yeniden oluşturun.
+- **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. Veritabanını ikisi aynı anda kullanamaz.
+- [Bakım komutları](#bakım-komutları) da aynı şekilde çalışır, örneğin `docker compose run --rm kap python kap_output.py`.
+
 ## Kullanım
 
 Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yalnızca bir süreç kullanabilir. İkisi de Ctrl+C ile durdurulur.
