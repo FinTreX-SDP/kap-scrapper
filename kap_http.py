@@ -1,18 +1,15 @@
-"""HTTP helper shared by the scrapers: spaces out requests, retries transient errors and waits out KAP's rate limit."""
+"""HTTP helper shared by the scrapers: retries transient errors and waits out KAP's rate limit."""
 import threading
 import time
 
 import httpx
-from tenacity import retry, retry_if_exception_type, retry_if_not_exception_type, stop_after_attempt, wait_exponential
-from tqdm import tqdm
+from tenacity import retry, retry_if_exception_type, retry_if_not_exception_type, stop_after_attempt
 
-# KAP blocks an IP that sends too many requests. It has answered 429, and on 15.10.2026 its firewall
-# dropped every connection without an answer once requests came 1.22 s apart from 22 connections,
-# while 1.5 s apart had run for many minutes. So requests from all threads start REQUEST_INTERVAL
-# apart; at a block every thread pauses, and afterwards requests come 1.5 times further apart.
-REQUEST_INTERVAL = 1.5  # seconds between the starts of two requests, across all threads
+# KAP blocks an IP that sends too many requests. It has answered 429, and its firewall drops every
+# connection without an answer. On 15.10.2026 it blocked after ~100 requests, however fast they came,
+# for ~3.5 minutes each time. So requests are not spaced out; at a block every thread pauses.
 BLOCKED_STATUSES = {403, 429, 503}  # how KAP or its firewall refuses too many requests
-RATE_LIMIT_PAUSE = 300  # seconds
+RATE_LIMIT_PAUSE = 240  # seconds
 MAX_RATE_LIMIT_PAUSES = 3  # consecutive pauses before giving up
 # KAP may also throttle a response to a trickle (~10 KB/s) instead of answering 429. The client's
 # read timeout never fires while bytes keep arriving, so each download gets a total time limit.
@@ -34,34 +31,29 @@ class TooSlow(Exception):
     pass
 
 
-class Throttle:
-    """Spaces out the requests of all threads, and holds them all while KAP blocks."""
+class Gate:
+    """Holds every thread while KAP blocks."""
 
-    def __init__(self, interval: float):
-        self.interval = interval
-        self.next_start = 0.0
+    def __init__(self):
+        self.open_at = 0.0
         self.lock = threading.Lock()
 
     def wait(self) -> None:
-        """Block until this thread may send its request."""
-        with self.lock:
-            start = max(time.monotonic(), self.next_start)
-            self.next_start = start + self.interval
-        time.sleep(max(0.0, start - time.monotonic()))
+        """Block until the pause, if any, is over."""
+        time.sleep(max(0.0, self.open_at - time.monotonic()))
 
     def pause(self, seconds: float, reason: str) -> None:
-        """Hold every thread for `seconds`, then send requests 1.5 times further apart."""
+        """Hold every thread for `seconds`."""
         with self.lock:
             now = time.monotonic()
-            if self.next_start > now + seconds / 2:
+            if self.open_at > now + seconds / 2:
                 return  # another thread already paused for the same block
-            self.next_start = now + seconds
-            self.interval *= 1.5
-            tqdm.write(f"KAP blocked a request ({reason}), pausing {seconds // 60} minutes; "
-                       f"then one request every {self.interval:.2f} s.")
+            self.open_at = now + seconds
+        print(f"[{time.strftime('%H:%M:%S')}] KAP blocked a request ({reason}), pausing {seconds // 60} minutes.",
+              flush=True)
 
 
-throttle = Throttle(REQUEST_INTERVAL)
+gate = Gate()
 
 
 def file_size(data: bytes) -> int | None:
@@ -71,10 +63,10 @@ def file_size(data: bytes) -> int | None:
     return None
 
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30),  # never retry Ctrl+C (not an Exception)
+@retry(stop=stop_after_attempt(5),  # never retry Ctrl+C (not an Exception)
        retry=retry_if_exception_type(Exception) & retry_if_not_exception_type((RateLimited, TooSlow)), reraise=True)
 def _get_once(client: httpx.Client, url: str) -> bytes:
-    throttle.wait()
+    gate.wait()
     started = time.monotonic()
     limit = DOWNLOAD_DEADLINE
     try:
@@ -103,5 +95,6 @@ def kap_get(client: httpx.Client, url: str) -> bytes:
         try:
             return _get_once(client, url)
         except RateLimited as e:
-            throttle.pause(RATE_LIMIT_PAUSE, e.args[0])
+            gate.pause(RATE_LIMIT_PAUSE, e.args[0])
     return _get_once(client, url)
+

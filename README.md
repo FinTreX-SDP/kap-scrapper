@@ -87,7 +87,7 @@ Canlı ve geçmişi aynı anda çalıştırmayın. İkisi aynı dosyaya yazar ve
 python kap_watch.py
 ```
 
-KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Hata alan bir bildirim 5 dakika sonra yeniden denenir, en fazla 3 kez. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
+KAP'ı beklemeden sürekli kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Hata alan bir bildirim 5 dakika sonra yeniden denenir, en fazla 3 kez. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
 
 ### Geçmiş
 
@@ -98,7 +98,7 @@ python kap_history.py --start 01.01.2025 --end 31.12.2025
 - **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Bildirimler yeniden eskiye doğru işlenir.
 - **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; dosyada olan bildirimleri atlar, kaldığı yerden devam eder. Hata alan bildirimler de o zaman baştan denenir. Yarım kalan bir bildirimin (örneğin eki inmekte olan) sayfası da yeniden çekilir.
 - **Bitiş.** Aralık bitince kendiliğinden kapanır.
-- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar alır: KAP'ın istek sınırı yüzünden bir sayfa, bekleme dahil ortalama 6 saniye sürer. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı, yani bir ay yaklaşık 2 saat sürer. 12 işçi aynı anda çalışır; bazıları yavaş inen ekleri beklerken diğerleri sayfalara devam eder. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
+- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar ve ekler alır. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı. 12 işçi aynı anda çalışır; bazıları yavaş inen ekleri beklerken diğerleri sayfalara devam eder. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
 
 ## Çıktılar
 
@@ -167,7 +167,7 @@ kap_http.py           KAP'ın istek sınırına karşı bekleme ve yeniden denem
 
 ## Bilinmesi gerekenler
 
-- **İstek sınırı.** KAP çok fazla istek gönderen IP'yi geçici olarak engeller. Engeli bazen HTTP 429 ile bildirir, bazen de bağlantıları hiç yanıt vermeden keser. Geçmiş komutu 12, canlı izleyici 4 işçiyle çalışır. İstekler tüm işçiler için ortak bir sırayla, 1,5 saniye arayla başlar. Bu aralık uzun süre sorunsuz çalıştı; 1,22 saniyeye inildiğinde ise KAP IP'yi engelledi. Engel olunca (HTTP 429, 403, 503 ya da yanıtsız kesilen bağlantı) herkes 5 dakika bekler, sonra istekler 1,5 kat daha seyrek gönderilir. Aralık `kap_http.py` içindeki `REQUEST_INTERVAL` değeridir, işçi sayıları `kap_history.py` ve `kap_watch.py` içindeki `WORKERS` değerleridir. Aralığı kısaltmayın.
+- **İstek sınırı.** KAP çok fazla istek gönderen IP'yi geçici olarak engeller. Engeli bazen HTTP 429 ile bildirir, bazen de bağlantıları hiç yanıt vermeden keser. Geçmiş komutu 12, canlı izleyici 4 işçiyle çalışır. KAP birkaç dakikada ~100 istekten sonra IP'yi birkaç dakikalığına engeller. İstekler arasında bekleme yoktur; engel ne kadar seyrek istekte de gelir. Engel olunca (HTTP 429, 403, 503 ya da yanıtsız kesilen bağlantı) herkes 4 dakika bekler, sonra devam eder. Hata alan diğer istekler beklemeden en fazla 5 kez denenir. İşçi sayıları `kap_history.py` ve `kap_watch.py` içindeki `WORKERS` değerleridir.
 - **Yavaş indirmeler.** KAP ekleri her bağlantıya saniyede yaklaşık 10-15 KB ile verir. Bu yüzden her ekin indirilmesine boyutuna göre süre tanınır: en az 180 saniye, büyük dosyalarda saniyede 4 KB'a göre gereken süre. Örneğin bir bankanın 4,7 MB'lık finansal raporuna yaklaşık 19 dakika tanınır. KAP bazen dosyanın ortasında veri göndermeyi bırakır. 30 saniye hiç veri gelmezse indirme kesilip baştan denenir. Bu sürede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
 - **Yeniden ayrıştırma yok.** Ham sayfalar saklanmaz. Ayrıştırıcı değişirse eski satırlar kendiliğinden yenilenmez; o bildirimlerin KAP'tan yeniden çekilmesi gerekir.
 - **Türkçe karakterler bozuksa** PowerShell'de `$env:PYTHONIOENCODING = "utf-8"` ayarlayın.

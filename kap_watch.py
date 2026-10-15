@@ -1,7 +1,7 @@
 """Watch KAP for new disclosures of the companies in companies.txt and write each to data/disclosures.jsonl
 as soon as its page and attachments are read.
 
-Polls the disclosure list every POLL_INTERVAL seconds and hands each new disclosure to one of WORKERS
+Polls the disclosure list without pause and hands each new disclosure to one of WORKERS
 threads, which fetches its page, financial statements and attachments, so a slow attachment (KAP sends
 them slowly, and scans need OCR) never holds up other disclosures. Only disclosures published after the
 watcher started are processed (minus CATCH_UP_MINUTES, so a short restart does not miss anything);
@@ -27,11 +27,10 @@ from kap_disclosures import HEADERS, Disclosure, fetch_list, list_fields
 from kap_http import ATTACHMENT_TIMEOUT, kap_get
 from kap_output import DATA_DIR, append_record, disclosure_record, stop_writing, written_indexes
 
-POLL_INTERVAL = 15  # seconds
 CATCH_UP_MINUTES = 10
 RETRY_INTERVAL = 300  # seconds before a disclosure that failed is tried again
 MAX_FAILURES = 3  # attempts per disclosure before the watcher leaves it to kap_history.py
-WORKERS = 4  # new disclosures come a few at a time; kap_http's throttle spaces out their requests anyway
+WORKERS = 4  # new disclosures come a few at a time
 
 
 def log(message: str) -> None:
@@ -78,7 +77,7 @@ def main() -> None:
     retry_at: dict[int, float] = {}  # disclosure_index -> time.monotonic() after which a failed one is tried again
     jobs: queue.Queue = queue.Queue()
     since = datetime.now() - timedelta(minutes=CATCH_UP_MINUTES)
-    log(f"Watching KAP every {POLL_INTERVAL} s for disclosures published after {since:%d.%m %H:%M:%S}. "
+    log(f"Watching KAP for disclosures published after {since:%d.%m %H:%M:%S}. "
         "Ctrl+C to stop.")
 
     with httpx.Client(headers=HEADERS, http2=True, timeout=60) as client:  # pages and lists; they are small
@@ -105,7 +104,7 @@ def main() -> None:
                 started = time.monotonic()
                 now = datetime.now()
                 try:  # yesterday too, just after midnight
-                    listed = fetch_list(client, (now - timedelta(seconds=2 * POLL_INTERVAL)).date(), now.date())
+                    listed = fetch_list(client, (now - timedelta(minutes=1)).date(), now.date())
                 except httpx.HTTPError as e:
                     log(f"Network error, trying again on the next poll: {e}")
                     listed = []
@@ -115,7 +114,6 @@ def main() -> None:
                             and failures[i] < MAX_FAILURES and retry_at.get(i, 0) <= started):
                         running.add(i)
                         jobs.put(d)
-                time.sleep(max(0.0, POLL_INTERVAL - (time.monotonic() - started)))
         except KeyboardInterrupt:
             stop_writing()
             log("Stopping." + (f" {len(running)} disclosures were not finished; kap_history.py can fetch them."

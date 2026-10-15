@@ -8,9 +8,9 @@ from pathlib import Path
 
 import httpx
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt
 
-from kap_http import BLOCKED_STATUSES, RATE_LIMIT_PAUSE, throttle
+from kap_http import BLOCKED_STATUSES, RATE_LIMIT_PAUSE, gate
 
 API_URL = "https://www.kap.org.tr/tr/api/disclosure/list/main"
 DISCLOSURE_URL = "https://www.kap.org.tr/tr/Bildirim/{}"
@@ -90,20 +90,20 @@ def stock_codes(text: str | None) -> set[str]:
     return {code.strip() for code in (text or "").split(",") if code.strip()}  # e.g. "ISATR, ISBTR, ISCTR"
 
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=30), reraise=True)
+@retry(stop=stop_after_attempt(5), reraise=True)
 def fetch_list(client: httpx.Client, start: date, end: date) -> list[Disclosure]:
     """Return the disclosures published from `start` to `end` (both included) that concern a company in
     the watchlist, as its own disclosure or as one of its related stocks. While KAP blocks, the retries
     wait for the pause of every thread."""
-    throttle.wait()
+    gate.wait()
     try:
         r = client.post(API_URL, json={"fromDate": start.strftime(DATE_FORMAT), "toDate": end.strftime(DATE_FORMAT),
                                        "memberTypes": ["IGS", "DDK"]})
     except httpx.RemoteProtocolError:  # dropped before any answer: KAP's firewall blocks
-        throttle.pause(RATE_LIMIT_PAUSE, "connection dropped")
+        gate.pause(RATE_LIMIT_PAUSE, "connection dropped")
         raise
     if r.status_code in BLOCKED_STATUSES:
-        throttle.pause(RATE_LIMIT_PAUSE, f"HTTP {r.status_code}")
+        gate.pause(RATE_LIMIT_PAUSE, f"HTTP {r.status_code}")
     r.raise_for_status()
     disclosures = [Disclosure(**item["disclosureBasic"]) for item in r.json()]
     return [d for d in disclosures if (stock_codes(d.stockCode) | stock_codes(d.relatedStocks)) & WATCHLIST]

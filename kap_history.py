@@ -22,8 +22,8 @@ from kap_disclosures import DATE_FORMAT, HEADERS, Disclosure, fetch_list, months
 from kap_output import DATA_DIR, JSONL_PATH, append_record, stop_writing, written_indexes
 from kap_watch import fetch_disclosure, log, start_workers
 
-# Requests are spaced out across all threads by kap_http's throttle, so the workers only overlap KAP's
-# slow answers: a page takes 0.4-9 s to come, an attachment several minutes at ~10 KB/s per connection.
+# The workers overlap KAP's slow answers: a page takes 0.4-9 s to come, an attachment several minutes
+# at ~10 KB/s per connection.
 # KAP kept 10-30 KB/s on each of 12 connections at once without a stall (~230 KB/s in total), which is
 # about all the line takes. While some workers wait for attachments, the others go on with pages.
 WORKERS = 12
