@@ -1,12 +1,12 @@
-"""Watch KAP for new disclosures of the companies in companies.txt and fetch their details and attachments
-as soon as they appear.
+"""Watch KAP for new disclosures of the companies in companies.txt and write each to data/disclosures.jsonl
+as soon as its page and attachments are read.
 
-Polls the disclosure list every POLL_INTERVAL seconds. Details are fetched right away; attachments
-(which may need slow OCR) are handled by a background worker so they never delay new disclosures.
-Only disclosures published after the watcher started are processed (minus CATCH_UP_MINUTES, so a
-short restart does not miss anything); kap_history.py fetches older ones. Stop with Ctrl+C.
-
-Every disclosure whose page and attachments have all been read is appended to data/disclosures.jsonl.
+Polls the disclosure list every POLL_INTERVAL seconds and hands each new disclosure to one of WORKERS
+threads, which fetches its page, financial statements and attachments, so a slow attachment (KAP sends
+them slowly, and scans need OCR) never holds up other disclosures. Only disclosures published after the
+watcher started are processed (minus CATCH_UP_MINUTES, so a short restart does not miss anything);
+kap_history.py fetches older ones. A disclosure that fails is tried again RETRY_INTERVAL seconds later,
+at most MAX_FAILURES times in all. Stop with Ctrl+C.
 
 Usage:
     python kap_watch.py
@@ -15,168 +15,111 @@ import queue
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
-import duckdb
 import httpx
 
 import kap_attachments
 import kap_details
 import kap_financials
-from kap_disclosures import HEADERS, REQUEST_DELAY, SCHEMA, fetch_list, save_to_db
-from kap_http import ATTACHMENT_TIMEOUT, RateLimited, kap_get
-from kap_output import DATA_DIR, DB_PATH, append_to_jsonl, export_to_excel, write_detail_file
+from kap_disclosures import HEADERS, Disclosure, fetch_list, list_fields
+from kap_http import ATTACHMENT_TIMEOUT, kap_get
+from kap_output import DATA_DIR, append_record, disclosure_record, stop_writing, written_indexes
 
 POLL_INTERVAL = 15  # seconds
 CATCH_UP_MINUTES = 10
-RETRY_INTERVAL = 300  # seconds between sweeps that re-queue failed attachments
-MAX_FAILURES = 3  # detail fetch attempts per disclosure before the watcher skips it
+RETRY_INTERVAL = 300  # seconds before a disclosure that failed is tried again
+MAX_FAILURES = 3  # attempts per disclosure before the watcher leaves it to kap_history.py
+WORKERS = 4  # new disclosures come a few at a time; kap_http's throttle spaces out their requests anyway
 
 
 def log(message: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
 
 
-def fetch_details(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
-                  disclosure_class: str | None, title: str | None) -> dict:
-    """Fetch and save a disclosure page and, for a financial report, its statements. Returns the parsed page,
-    with the ids of the attachments worth reading under "to_read"; the others are marked as skipped."""
-    page = kap_details.parse_page(kap_details.fetch_page(client, disclosure_index))
-    page["to_read"] = kap_attachments.to_read(title, {file_id: a["file_name"] for file_id, a in page["attachments"].items()})
-    # Marked before the page is saved, so no attachment worker ever sees them waiting to be read.
-    kap_attachments.mark_skipped(con, disclosure_index, set(page["attachments"]) - page["to_read"])
-    kap_details.save(con, disclosure_index, page)
-    if disclosure_class == "FR" and "financial-table" in page["html"]:
-        page["financial_items"] = kap_financials.parse_financials(page["html"])
-        kap_financials.save(con, disclosure_index, page["financial_items"])
-    write_detail_file(con, disclosure_index)
-    return page
+def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclosure) -> dict:
+    """Fetch a disclosure's page, its financial statements if it is a financial report, and the attachments
+    worth reading, and return its record. `file_client` is for the attachments, which come slowly."""
+    page = kap_details.parse_page(kap_details.fetch_page(client, d.disclosureIndex))
+    # Other forms reuse the layout of the statements, so only financial reports (class FR) are parsed.
+    items = (kap_financials.parse_financials(page["html"])
+             if d.disclosureClass == "FR" and "financial-table" in page["html"] else [])
+    texts = {}
+    for file_id in kap_attachments.to_read(d.title, {file_id: a["file_name"] for file_id, a in page["attachments"].items()}):
+        a = page["attachments"][file_id]
+        texts[file_id] = result = kap_attachments.extract(kap_get(file_client, a["url"]))
+        log(f"  attachment {d.disclosureIndex} '{a['file_name']}': {result['page_count']} pages, "
+            f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
+    return disclosure_record(list_fields(d), page, items, texts)
 
 
-def fetch_attachment(con: duckdb.DuckDBPyConnection, client: httpx.Client, disclosure_index: int,
-                     file_id: str, url: str) -> dict:
-    """Download one attachment, extract its text and tables and save them. Returns the extraction result."""
-    result = kap_attachments.extract(kap_get(client, url))
-    kap_attachments.save(con, disclosure_index, file_id, result)
-    write_detail_file(con, disclosure_index)
-    return result
+def start_workers(count: int, jobs: queue.Queue, handle: Callable[[httpx.Client, Disclosure], None]) -> None:
+    """Start `count` threads that pass each disclosure put in `jobs` to `handle`, together with a client of
+    their own for attachments: KAP sends ~10 KB/s per connection, so each download needs its own."""
+    def work() -> None:
+        with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as file_client:
+            while True:
+                d = jobs.get()
+                try:
+                    handle(file_client, d)
+                finally:
+                    jobs.task_done()
 
-
-def attachment_worker(con: duckdb.DuckDBPyConnection, jobs: queue.Queue, changed: threading.Event) -> None:
-    cur = con.cursor()  # DuckDB needs a separate cursor per thread
-    with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as client:
-        while True:
-            disclosure_index, file_id, file_name, url = jobs.get()
-            try:
-                result = fetch_attachment(cur, client, disclosure_index, file_id, url)
-                log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
-                    f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
-                changed.set()
-            except Exception as e:  # retried by the next sweep in main()
-                log(f"  attachment {disclosure_index} '{file_name}' failed, will retry: {e}")
-            finally:
-                jobs.task_done()
-            time.sleep(REQUEST_DELAY)
-
-
-def queue_missing_attachments(con: duckdb.DuckDBPyConnection, jobs: queue.Queue, since: datetime) -> int:
-    """Queue attachments of watched disclosures that have no extracted text yet (e.g. after a failure)."""
-    missing = con.execute("""
-        SELECT a.disclosure_index, a.file_id, a.file_name, a.url
-        FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
-        WHERE d.publish_date >= ? AND NOT EXISTS (
-            SELECT 1 FROM attachment_texts t WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)
-    """, [since]).fetchall()
-    for job in missing:
-        jobs.put(job)
-    return len(missing)
-
-
-def poll(con: duckdb.DuckDBPyConnection, client: httpx.Client, since: datetime) -> list[tuple]:
-    """Save the latest list and return new disclosures that still need details."""
-    now = datetime.now()
-    start = (now - timedelta(seconds=2 * POLL_INTERVAL)).date()  # yesterday too, just after midnight
-    save_to_db(con, fetch_list(client, start, now.date()))
-    return con.execute("""
-        SELECT disclosure_index, publish_date, stock_code, title, disclosure_class FROM disclosures
-        WHERE publish_date >= ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)
-        ORDER BY publish_date
-    """, [since]).fetchall()
+    for _ in range(count):
+        threading.Thread(target=work, daemon=True).start()
 
 
 def main() -> None:
     DATA_DIR.mkdir(exist_ok=True)
-    con = duckdb.connect(str(DB_PATH))
-    con.execute(SCHEMA)
-    con.execute(kap_details.SCHEMA)
-    con.execute(kap_attachments.SCHEMA)
-    con.execute(kap_financials.SCHEMA)
-    kap_attachments.skip_unwanted(con)  # so the retry sweep never downloads them
-
+    done = written_indexes()
+    running: set[int] = set()  # handed to a worker and not finished yet
+    failures: Counter = Counter()  # disclosure_index -> failed attempts
+    retry_at: dict[int, float] = {}  # disclosure_index -> time.monotonic() after which a failed one is tried again
     jobs: queue.Queue = queue.Queue()
-    changed = threading.Event()
-    threading.Thread(target=attachment_worker, args=(con, jobs, changed), daemon=True).start()
-
     since = datetime.now() - timedelta(minutes=CATCH_UP_MINUTES)
     log(f"Watching KAP every {POLL_INTERVAL} s for disclosures published after {since:%d.%m %H:%M:%S}. "
         "Ctrl+C to stop.")
-    last_sweep = time.monotonic()
-    failures: Counter = Counter()  # disclosure_index -> failed detail fetches
-    try:
-        with httpx.Client(headers=HEADERS, http2=True, timeout=60) as client:
+
+    with httpx.Client(headers=HEADERS, http2=True, timeout=60) as client:  # pages and lists; they are small
+
+        def handle(file_client: httpx.Client, d: Disclosure) -> None:
+            try:
+                record = fetch_disclosure(client, file_client, d)
+            except Exception as e:  # tried again by a later poll
+                failures[d.disclosureIndex] += 1
+                retry_at[d.disclosureIndex] = time.monotonic() + RETRY_INTERVAL
+                log(f"{d.disclosureIndex} failed ({failures[d.disclosureIndex]}/{MAX_FAILURES}): {e!r}")
+            else:
+                append_record(record)
+                done.add(d.disclosureIndex)
+                delay = (datetime.now() - d.published).total_seconds()
+                log(f"NEW {d.disclosureIndex} {d.stockCode or '-'}: {d.title} "
+                    f"(published {d.published:%H:%M:%S}, written after {delay:.0f} s)")
+            finally:
+                running.discard(d.disclosureIndex)
+
+        start_workers(WORKERS, jobs, handle)
+        try:
             while True:
                 started = time.monotonic()
-                if started - last_sweep > RETRY_INTERVAL and jobs.unfinished_tasks == 0:  # worker idle
-                    last_sweep = started
-                    if count := queue_missing_attachments(con, jobs, since):
-                        log(f"Retrying {count} attachments that failed earlier.")
-                try:
-                    for disclosure_index, published, stock_code, title, disclosure_class in poll(con, client, since):
-                        if failures[disclosure_index] >= MAX_FAILURES:
-                            continue  # left for kap_details.py, so one bad page cannot block the rest
-                        try:
-                            page = fetch_details(con, client, disclosure_index, disclosure_class, title)
-                        except RateLimited:
-                            raise
-                        except Exception as e:  # retried on the next poll
-                            failures[disclosure_index] += 1
-                            log(f"Details of {disclosure_index} failed ({failures[disclosure_index]}/{MAX_FAILURES}): {e}")
-                            continue
-                        if "financial_items" in page:
-                            log(f"  financial statements of {disclosure_index}: {len(page['financial_items'])} values")
-                        delay = (datetime.now() - published).total_seconds()
-                        log(f"NEW {disclosure_index} {stock_code or '-'}: {title} "
-                            f"(published {published:%H:%M:%S}, caught after {delay:.0f} s)")
-                        for file_id, a in page["attachments"].items():
-                            if file_id in page["to_read"]:
-                                jobs.put((disclosure_index, file_id, a["file_name"], a["url"]))
-                        changed.set()
-                        time.sleep(REQUEST_DELAY)
-                except RateLimited:
-                    log("KAP keeps rate limiting; trying again on the next poll.")
-                except httpx.HTTPError as e:  # the list request itself failed
+                now = datetime.now()
+                try:  # yesterday too, just after midnight
+                    listed = fetch_list(client, (now - timedelta(seconds=2 * POLL_INTERVAL)).date(), now.date())
+                except httpx.HTTPError as e:
                     log(f"Network error, trying again on the next poll: {e}")
-
-                if changed.is_set():
-                    changed.clear()
-                    try:
-                        export_to_excel(con)
-                    except PermissionError:
-                        log("Excel file is open, so it was not updated. Close it to get updates.")
-                append_to_jsonl(con)
+                    listed = []
+                for d in sorted(listed, key=lambda d: d.published):
+                    i = d.disclosureIndex
+                    if (d.published >= since and i not in done and i not in running
+                            and failures[i] < MAX_FAILURES and retry_at.get(i, 0) <= started):
+                        running.add(i)
+                        jobs.put(d)
                 time.sleep(max(0.0, POLL_INTERVAL - (time.monotonic() - started)))
-    except KeyboardInterrupt:
-        log("Stopping.")
-    finally:
-        pending = jobs.qsize()
-        if pending:
-            log(f"{pending} attachments were still queued; run kap_attachments.py to process them.")
-        append_to_jsonl(con)
-        try:
-            export_to_excel(con)
-        except PermissionError:
-            log("Excel file is open, so it was not updated.")
-        con.close()
+        except KeyboardInterrupt:
+            stop_writing()
+            log("Stopping." + (f" {len(running)} disclosures were not finished; kap_history.py can fetch them."
+                               if running else ""))
 
 
 if __name__ == "__main__":

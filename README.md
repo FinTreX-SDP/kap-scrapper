@@ -8,11 +8,11 @@
 
 Her bildirim için aynı adımlar izlenir:
 
-1. **Liste.** Bildirim listesi KAP'tan çekilir ve hemen süzülür. Yalnızca [listedeki şirketlerle](#şirket-listesi) ilgili bildirimler kalır; diğerleri veritabanına yazılmaz, sayfaları da hiç istenmez. Fon bildirimleri hariçtir.
+1. **Liste.** Bildirim listesi KAP'tan çekilir ve hemen süzülür. Yalnızca [listedeki şirketlerle](#şirket-listesi) ilgili bildirimler kalır; diğerlerinin sayfaları hiç istenmez. Fon bildirimleri hariçtir.
 2. **Sayfa.** Bildirimin sayfası çekilir. Metni, alanları ve tabloları ayrıştırılır.
 3. **Mali tablolar.** Finansal raporlarda bilanço, gelir tablosu, nakit akış ve özkaynak tabloları sayısal değerler olarak çıkarılır.
 4. **Ekler.** Sadece değerli türlerin ekleri indirilir ve metni çıkarılır. Taranmış belgeler OCR ile okunur. Ayrıntılar: [Hangi ekler okunur](#hangi-ekler-okunur).
-5. **Kayıt.** Her şey `data/kap.duckdb` veritabanına yazılır. Sayfası ve ekleri tamamlanan bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir.
+5. **Kayıt.** Sayfası ve ekleri tamamlanan bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir. Veritabanı yoktur; bu dosya tek çıktıdır.
 
 ## Kurulum (Windows)
 
@@ -56,8 +56,7 @@ Bu komut canlı izleyiciyi arka planda başlatır. Çıktılar yine projedeki `d
 
 - **Otomatik başlama.** Siz durdurmadıkça izleyici, çökerse ve Docker Desktop her açıldığında kendiliğinden başlar. Bilgisayar açılınca çalışması için Docker Desktop ayarlarında "Start Docker Desktop when you sign in" seçili olmalı.
 - **Kod ya da `companies.txt` değişince** `docker compose up -d --build` ile image'ı yeniden oluşturun.
-- **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. Veritabanını ikisi aynı anda kullanamaz.
-- [Bakım komutları](#bakım-komutları) da aynı şekilde çalışır, örneğin `docker compose run --rm kap python kap_output.py`.
+- **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. İkisi aynı dosyaya yazar.
 
 ## Apify ile geçmiş
 
@@ -74,14 +73,13 @@ Ardından Apify Console'da **KAP history** Actor'ını açın, başlangıç ve b
 
 - **Sonuç.** Bildirimler `kap-disclosures` adlı Dataset'te toplanır (Storage > Datasets). Her kayıt `disclosures.jsonl` dosyasındaki bir satırla aynıdır. Console'dan JSON, CSV ya da Excel olarak indirilebilir.
 - **Devam etme.** Dataset'te olan bildirimler atlanır. Yarıda kalan bir aralığı yeniden çalıştırmak kaldığı yerden devam eder.
-- **Veritabanı yok.** Run'ın diski küçüktür ve run bitince silinir. Bu yüzden her ay ayrı, geçici bir veritabanıyla işlenir. Apify'da yalnızca Dataset kalır, ham sayfalar saklanmaz.
 - **Süre sınırı.** Apify run'ı varsayılan olarak 1 saatte durdurur. Uzun aralıklar için Start'tan önce Run options > Timeout değerini artırın (0 sınırsız demektir). Süre dolup kesilen run, aynı aralıkla yeniden çalıştırılınca devam eder.
 - **Maliyet.** 1 GB bellekle her saat 1 compute unit (yaklaşık 0,20 $) harcanır. Bir ay yaklaşık 2 saat sürer. 08.10.2026 testi (29 bildirim) 77 saniye sürdü, en fazla 288 MB bellek kullandı ve 0,004 $ tuttu.
 - **Kod ya da `companies.txt` değişince** `npx apify-cli push` ile yeniden yükleyin.
 
 ## Kullanım
 
-Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yalnızca bir süreç kullanabilir. İkisi de Ctrl+C ile durdurulur.
+Canlı ve geçmişi aynı anda çalıştırmayın. İkisi aynı dosyaya yazar ve aynı bildirimi iki kez ekleyebilir. İkisi de Ctrl+C ile durdurulur.
 
 ### Canlı
 
@@ -89,7 +87,7 @@ Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yal
 python kap_watch.py
 ```
 
-KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
+KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Hata alan bir bildirim 5 dakika sonra yeniden denenir, en fazla 3 kez. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
 
 ### Geçmiş
 
@@ -97,35 +95,16 @@ KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başlad�
 python kap_history.py --start 01.01.2025 --end 31.12.2025
 ```
 
-- **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Günler bitişten başlangıca doğru işlenir.
-- **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; tamamlananları atlar, kaldığı yerden devam eder. Hata alan sayfa ve ekler de o zaman yeniden denenir.
+- **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Bildirimler yeniden eskiye doğru işlenir.
+- **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; dosyada olan bildirimleri atlar, kaldığı yerden devam eder. Hata alan bildirimler de o zaman baştan denenir. Yarım kalan bir bildirimin (örneğin eki inmekte olan) sayfası da yeniden çekilir.
 - **Bitiş.** Aralık bitince kendiliğinden kapanır.
-- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar alır: KAP'ın istek sınırı yüzünden bir sayfa, bekleme dahil ortalama 6 saniye sürer. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı, yani bir ay yaklaşık 2 saat sürer. Ekler arka planda bu sırada okunur. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
-
-### Bakım komutları
-
-| Komut | Ne yapar |
-|---|---|
-| `python kap_output.py` | JSON Lines dosyasını, detay dosyalarını ve Excel özetini veritabanından baştan yazar. KAP'a istek atmaz |
-| `python kap_details.py --reparse` | Saklı sayfaları KAP'a gitmeden yeniden ayrıştırır. Ayrıştırıcı değiştiğinde kullanılır |
-| `python kap_financials.py --all` | Saklı finansal raporlardan mali tabloları yeniden çıkarır |
-| `python kap_attachments.py` | Yarım kalan ekleri tamamlar |
-
-Yeniden ayrıştırmadan sonra JSON Lines dosyasını güncellemek için `python kap_output.py` komutunu çalıştırın.
+- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar alır: KAP'ın istek sınırı yüzünden bir sayfa, bekleme dahil ortalama 6 saniye sürer. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı, yani bir ay yaklaşık 2 saat sürer. 12 işçi aynı anda çalışır; bazıları yavaş inen ekleri beklerken diğerleri sayfalara devam eder. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
 
 ## Çıktılar
 
-Hepsi `data/` klasöründedir:
+Tek çıktı `data/disclosures.jsonl` dosyasıdır (**eğitim verisi**). Her satır bir bildirimin tam kaydıdır.
 
-| Dosya | İçerik |
-|---|---|
-| `disclosures.jsonl` | **Eğitim verisi.** Her satır bir bildirimin tam kaydıdır |
-| `kap.duckdb` | Her şeyin tutulduğu veritabanı, ham sayfa HTML'leri dahil |
-| `json/YYYY-AA-GG/` | Her bildirim için ayrı bir JSON dosyası. Canlıda saniyeler içinde hazır olur |
-| `details/YYYY-AA-GG/` | Her bildirim için göz atmaya uygun bir Markdown dosyası |
-| `disclosures.xlsx` | En yeni 5.000 bildirimin Excel özeti. Detay dosyalarına bağlantı içerir |
-
-Bir bildirim, sayfası okunup ekleri de okunduğunda ya da atlandığında JSON Lines dosyasına bir kez eklenir. Okuma örneği: `pl.read_ndjson("data/disclosures.jsonl")`.
+Bir bildirim, sayfası okunup ekleri de okunduğunda ya da atlandığında dosyaya bir kez eklenir. Satırlar yayın sırasına göre değil, işin bittiği sıraya göre dizilir. Okuma örneği: `[json.loads(line) for line in open("data/disclosures.jsonl", encoding="utf-8")]`.
 
 Bir kaydın alanları:
 
@@ -174,22 +153,22 @@ Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi i
 
 ```text
 companies.txt         Bildirimleri toplanan şirketler
-kap_watch.py          Canlı izleyici
+kap_watch.py          Canlı izleyici; bir bildirimi baştan sona işleyen ortak kod da burada
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
-kap_apify.py          Apify'da geçmiş: kap_history.py'yi ay ay çalıştırır, sonuçları Dataset'e yazar
+kap_apify.py          Apify'da geçmiş: kap_history.py'nin işini yapar, sonuçları Dataset'e yazar
 .actor/               Apify Actor tanımı ve giriş formu
 kap_disclosures.py    Bildirim listesini çeker
 kap_details.py        Bildirim sayfasını çeker ve ayrıştırır
 kap_financials.py     Finansal raporlardan mali tabloları çıkarır
-kap_attachments.py    Hangi eklerin okunacağına karar verir, ekleri indirir, metin çıkarır, OCR yapar
-kap_output.py         Veritabanı yolu ve tüm çıktı dosyaları (JSON Lines, JSON, Markdown, Excel)
+kap_attachments.py    Hangi eklerin okunacağına karar verir, eklerden metin ve tablo çıkarır, OCR yapar
+kap_output.py         Bildirimin kaydını kurar ve JSON Lines dosyasına yazar
 kap_http.py           KAP'ın istek sınırına karşı bekleme ve yeniden deneme
 ```
 
 ## Bilinmesi gerekenler
 
-- **İstek sınırı.** KAP çok fazla istek gönderen IP'yi geçici olarak engeller. Engeli bazen HTTP 429 ile bildirir, bazen de bağlantıları hiç yanıt vermeden keser. Geçmiş komutu sayfaları 6, ekleri 12 işçiyle aynı anda çeker. İstekler tüm işçiler için ortak bir sırayla, 1,5 saniye arayla başlar. Bu aralık uzun süre sorunsuz çalıştı; 1,22 saniyeye inildiğinde ise KAP IP'yi engelledi. Engel olunca (HTTP 429, 403, 503 ya da yanıtsız kesilen bağlantı) herkes 5 dakika bekler, sonra istekler 1,5 kat daha seyrek gönderilir. Aralık `kap_http.py` içindeki `REQUEST_INTERVAL` değeridir, işçi sayıları `kap_history.py` içindedir. Aralığı kısaltmayın.
+- **İstek sınırı.** KAP çok fazla istek gönderen IP'yi geçici olarak engeller. Engeli bazen HTTP 429 ile bildirir, bazen de bağlantıları hiç yanıt vermeden keser. Geçmiş komutu 12, canlı izleyici 4 işçiyle çalışır. İstekler tüm işçiler için ortak bir sırayla, 1,5 saniye arayla başlar. Bu aralık uzun süre sorunsuz çalıştı; 1,22 saniyeye inildiğinde ise KAP IP'yi engelledi. Engel olunca (HTTP 429, 403, 503 ya da yanıtsız kesilen bağlantı) herkes 5 dakika bekler, sonra istekler 1,5 kat daha seyrek gönderilir. Aralık `kap_http.py` içindeki `REQUEST_INTERVAL` değeridir, işçi sayıları `kap_history.py` ve `kap_watch.py` içindeki `WORKERS` değerleridir. Aralığı kısaltmayın.
 - **Yavaş indirmeler.** KAP ekleri her bağlantıya saniyede yaklaşık 10-15 KB ile verir. Bu yüzden her ekin indirilmesine boyutuna göre süre tanınır: en az 180 saniye, büyük dosyalarda saniyede 4 KB'a göre gereken süre. Örneğin bir bankanın 4,7 MB'lık finansal raporuna yaklaşık 19 dakika tanınır. KAP bazen dosyanın ortasında veri göndermeyi bırakır. 30 saniye hiç veri gelmezse indirme kesilip baştan denenir. Bu sürede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
-- **Kilit hatası.** `Could not set lock on file ... kap.duckdb` hatası, veritabanının başka bir süreçte açık olduğunu gösterir. Önce o süreci durdurun.
+- **Yeniden ayrıştırma yok.** Ham sayfalar saklanmaz. Ayrıştırıcı değişirse eski satırlar kendiliğinden yenilenmez; o bildirimlerin KAP'tan yeniden çekilmesi gerekir.
 - **Türkçe karakterler bozuksa** PowerShell'de `$env:PYTHONIOENCODING = "utf-8"` ayarlayın.
 - **KAP değişebilir.** Ayrıştırıcılar KAP'ın Ekim 2026'daki sayfa düzenine göre yazıldı.
