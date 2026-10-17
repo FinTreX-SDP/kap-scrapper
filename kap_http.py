@@ -8,6 +8,8 @@ from tenacity import retry, retry_if_exception_type, retry_if_not_exception_type
 # KAP blocks an IP that sends too many requests. It has answered 429, and its firewall drops every
 # connection without an answer. On 15.10.2026 it blocked after ~100 requests, however fast they came,
 # for ~3.5 minutes each time. So requests are not spaced out; at a block every thread pauses.
+# Through a proxy each request comes from another IP (see connection_options), so the gate is turned off
+# and a blocked request is tried again at once.
 BLOCKED_STATUSES = {403, 429, 503}  # how KAP or its firewall refuses too many requests
 RATE_LIMIT_PAUSE = 240  # seconds
 MAX_RATE_LIMIT_PAUSES = 3  # consecutive pauses before giving up
@@ -37,6 +39,7 @@ class Gate:
     def __init__(self):
         self.open_at = 0.0
         self.lock = threading.Lock()
+        self.enabled = True
 
     def wait(self) -> None:
         """Block until the pause, if any, is over."""
@@ -44,6 +47,8 @@ class Gate:
 
     def pause(self, seconds: float, reason: str) -> None:
         """Hold every thread for `seconds`."""
+        if not self.enabled:
+            return
         with self.lock:
             now = time.monotonic()
             if self.open_at > now + seconds / 2:
@@ -54,6 +59,15 @@ class Gate:
 
 
 gate = Gate()
+
+
+def connection_options(proxy: str | None) -> dict:
+    """httpx.Client options for requests through `proxy`, if any. The proxy sends each new connection out
+    from another IP, so through it no connection is kept open, and HTTP/2, which would share one connection
+    among all requests, is not used: each request, a retry of a blocked one too, comes from a new IP."""
+    if not proxy:
+        return {"http2": True}
+    return {"proxy": proxy, "limits": httpx.Limits(max_keepalive_connections=0)}
 
 
 def file_size(data: bytes) -> int | None:

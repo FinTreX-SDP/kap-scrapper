@@ -24,7 +24,7 @@ import kap_attachments
 import kap_details
 import kap_financials
 from kap_disclosures import HEADERS, Disclosure, fetch_list, list_fields
-from kap_http import ATTACHMENT_TIMEOUT, kap_get
+from kap_http import ATTACHMENT_TIMEOUT, connection_options, kap_get
 from kap_output import DATA_DIR, append_record, disclosure_record, stop_writing, written_indexes
 
 CATCH_UP_MINUTES = 10
@@ -38,14 +38,15 @@ def log(message: str) -> None:
 
 
 def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclosure) -> dict:
-    """Fetch a disclosure's page, its financial statements if it is a financial report, and the attachments
-    worth reading, and return its record. `file_client` is for the attachments, which come slowly."""
+    """Fetch a disclosure's page, its financial statements if it is a financial report, and all of its
+    attachments but English copies of Turkish ones, and return its record. `file_client` is for the
+    attachments, which come slowly."""
     page = kap_details.parse_page(kap_details.fetch_page(client, d.disclosureIndex))
     # Other forms reuse the layout of the statements, so only financial reports (class FR) are parsed.
     items = (kap_financials.parse_financials(page["html"])
              if d.disclosureClass == "FR" and "financial-table" in page["html"] else [])
     texts = {}
-    for file_id in kap_attachments.to_read(d.title, {file_id: a["file_name"] for file_id, a in page["attachments"].items()}):
+    for file_id in kap_attachments.to_read({file_id: a["file_name"] for file_id, a in page["attachments"].items()}):
         a = page["attachments"][file_id]
         texts[file_id] = result = kap_attachments.extract(kap_get(file_client, a["url"]))
         log(f"  attachment {d.disclosureIndex} '{a['file_name']}': {result['page_count']} pages, "
@@ -53,11 +54,12 @@ def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclos
     return disclosure_record(list_fields(d), page, items, texts)
 
 
-def start_workers(count: int, jobs: queue.Queue, handle: Callable[[httpx.Client, Disclosure], None]) -> None:
+def start_workers(count: int, jobs: queue.Queue, handle: Callable[[httpx.Client, Disclosure], None],
+                  proxy: str | None = None) -> None:
     """Start `count` threads that pass each disclosure put in `jobs` to `handle`, together with a client of
     their own for attachments: KAP sends ~10 KB/s per connection, so each download needs its own."""
     def work() -> None:
-        with httpx.Client(headers=HEADERS, http2=True, timeout=ATTACHMENT_TIMEOUT) as file_client:
+        with httpx.Client(headers=HEADERS, timeout=ATTACHMENT_TIMEOUT, **connection_options(proxy)) as file_client:
             while True:
                 d = jobs.get()
                 try:

@@ -104,7 +104,7 @@ python kap_history.py --start 01.01.2025 --end 31.12.2025
 
 Tek çıktı `data/disclosures.jsonl` dosyasıdır (**eğitim verisi**). Her satır bir bildirimin tam kaydıdır.
 
-Bir bildirim, sayfası okunup ekleri de okunduğunda ya da atlandığında dosyaya bir kez eklenir. Satırlar yayın sırasına göre değil, işin bittiği sıraya göre dizilir. Okuma örneği: `[json.loads(line) for line in open("data/disclosures.jsonl", encoding="utf-8")]`.
+Bir bildirim, sayfası ve ekleri okunduğunda dosyaya bir kez eklenir. Satırlar yayın sırasına göre değil, işin bittiği sıraya göre dizilir. Okuma örneği: `[json.loads(line) for line in open("data/disclosures.jsonl", encoding="utf-8")]`.
 
 Bir kaydın alanları:
 
@@ -121,7 +121,7 @@ Bir kaydın alanları:
 | `text` | Sayfanın tam metni |
 | `fields`, `tables` | Sayfadaki etiket-değer alanları ve tablolar. Finansal raporlarda `fields` boştur, çünkü sayfadaki alanların hepsi `financial_statements` içinde vardır |
 | `financial_statements` | Finansal raporların mali tabloları. Her değerin XBRL kavramı, dönemi ve para birimi vardır |
-| `attachments` | Ekler: adı, bağlantısı ve okunduysa `text` ile `tables`. Atlanan eklerde `file_type` `skipped` olur, `text` boştur |
+| `attachments` | Ekler: adı, bağlantısı, `text` ile `tables`. Türkçesi olan bir belgenin İngilizcesinde `file_type` `skipped`, okunamayan dosya türlerinde `unsupported` olur; ikisinde de `text` boştur |
 
 ## Şirket listesi
 
@@ -138,16 +138,7 @@ Listeye şirket eklerseniz geçmiş komutunu yeniden çalıştırmanız yeterlid
 
 ## Hangi ekler okunur
 
-Eklerin çoğu ya sayfada zaten yazılanın resmî belgesidir ya da faaliyet raporu gibi uzun, rutin raporlardır. Bu yüzden ekler sadece şu bildirim türlerinde okunur:
-
-- **Finansal Rapor** ve **Finansal Rapor Bildirimi:** dipnotlar ve bağımsız denetçi raporu. Sayfada yalnızca mali tablolar vardır, gerisi PDF'tedir. PDF'teki mali tablo sayfaları sayfadakilerle aynıdır; tüm dosya okunur
-- **Özel Durum Açıklaması (Genel):** yatırımcı sunumları, finansal sonuç notları, beklenti güncellemeleri
-- **Kredi Derecelendirmesi**
-- **Değerleme Raporu**
-- **Halka arz fiyatının varsayımlarına ilişkin rapor**
-- **Fon kullanım raporu**
-
-Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi indirilmez. Dil, dosya adından tahmin edilir; emin olunamazsa ek okunur. Listeyi değiştirmek için `kap_attachments.py` içindeki `EXTRACT_TYPES` sabitini düzenleyin.
+Her bildirimin bütün ekleri, türüne bakılmadan indirilip okunur. Yalnızca aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi indirilmez. Dil, dosya adından tahmin edilir; emin olunamazsa ya da bildirimin bütün ekleri İngilizceyse ek okunur. PDF'lerin metni ve tabloları, taranmış sayfalar ve resimler OCR ile çıkarılır. PDF ya da resim olmayan dosyalar (ör. Excel, Word) `unsupported` olarak kaydedilir.
 
 ## Dosyalar
 
@@ -160,7 +151,7 @@ kap_apify.py          Apify'da geçmiş: kap_history.py'nin işini yapar, sonuç
 kap_disclosures.py    Bildirim listesini çeker
 kap_details.py        Bildirim sayfasını çeker ve ayrıştırır
 kap_financials.py     Finansal raporlardan mali tabloları çıkarır
-kap_attachments.py    Hangi eklerin okunacağına karar verir, eklerden metin ve tablo çıkarır, OCR yapar
+kap_attachments.py    Eklerden metin ve tablo çıkarır, OCR yapar
 kap_output.py         Bildirimin kaydını kurar ve JSON Lines dosyasına yazar
 kap_http.py           KAP'ın istek sınırına karşı bekleme ve yeniden deneme
 ```

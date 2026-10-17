@@ -2,8 +2,8 @@
 
 Text comes from the PDF text layer, or OCR for scanned pages and images. Tables come from the text layer
 (PyMuPDF table finder) or, on scans, from ruled grid lines whose cells are OCR'd one by one.
-Files are processed in memory and never saved. Only attachments of the disclosure types in EXTRACT_TYPES
-are read, and not the English version of a document that also comes in Turkish; the others are skipped.
+Files are processed in memory and never saved. Every attachment of every disclosure is read, except the
+English version of a document that also comes in Turkish.
 """
 import io
 import os
@@ -31,21 +31,6 @@ MAX_OCR_PAGES = 50  # OCR takes ~6 s per page; pages beyond this are counted as 
 MIN_CELL_SIZE = 20  # px at OCR_DPI; smaller enclosed gaps are line noise, not cells
 MIN_TABLE_CELLS = 4  # fewer enclosed cells is a framed box or underline, not a table
 ROW_TOLERANCE = 15  # px; cells whose tops are this close belong to the same row
-
-# Disclosure types (the `title` column of disclosures) whose attachments are read. These attachments hold
-# what the disclosure page lacks, such as investor presentations and earnings releases. A financial report's
-# page holds only the statements; its PDF adds the notes and the auditor's report. Other types'
-# attachments are mostly the formal documents behind what the page already says, or long routine reports,
-# so they are listed but not downloaded.
-EXTRACT_TYPES = (
-    "Finansal Rapor",
-    "Finansal Rapor Bildirimi",
-    "Özel Durum Açıklaması (Genel)",
-    "Kredi Derecelendirmesi",
-    "Değerleme Raporu",
-    "Halka Arz Fiyatının Belirlenmesinde Esas Alınan Varsayımlara İlişkin Değerlendirme Raporu",
-    "Sermaye Artırımından Elde Edilecek - Edilen Fonun Kullanımına İlişkin Rapor",
-)
 
 def clean_text(text: str) -> str:
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())
@@ -174,12 +159,10 @@ def is_english(words: list[str]) -> bool:
     return len(ENGLISH_WORDS & set(words)) > len(TURKISH_WORDS & set(words))
 
 
-def to_read(title: str | None, file_names: dict[str, str]) -> set[str]:
-    """The file ids worth reading among one disclosure's attachments ({file_id: file_name}): none for a
-    disclosure type outside EXTRACT_TYPES, and no English version when the disclosure has a non-English
-    attachment too. The language is guessed from file names; when unsure, the attachment is read."""
-    if (title or "").strip() not in EXTRACT_TYPES:
-        return set()
+def to_read(file_names: dict[str, str]) -> set[str]:
+    """The file ids worth reading among one disclosure's attachments ({file_id: file_name}): all but the
+    English version of a document that also comes in Turkish. The language is guessed from file names; when
+    unsure, the attachment is read. If every attachment looks English, all are read, as there is no other copy."""
     words = {file_id: name_words(name) for file_id, name in file_names.items()}
     joined = {file_id: "".join(w) for file_id, w in words.items()}
     english = {file_id for file_id in file_names if is_english(words[file_id]) or any(  # e.g. 'Vkfyo07102026e.pdf'

@@ -5,8 +5,10 @@ the JSON Lines file. Disclosures already in the dataset are skipped, so running 
 continues where an earlier run stopped; a run that is aborted or timed out loses only the disclosures it
 had not finished.
 
+Requests go through the proxy chosen in proxyConfiguration, as KAP blocks the platform's own IPs.
+
 Input (see .actor/input_schema.json):
-    {"start": "01.09.2026", "end": "30.09.2026"}
+    {"start": "01.09.2026", "end": "30.09.2026", "proxyConfiguration": {"useApifyProxy": true}}
 """
 import asyncio
 import json
@@ -25,6 +27,10 @@ async def main() -> None:
         start, end = parse_day(actor_input["start"]), parse_day(actor_input["end"])
         if start > end:
             raise ValueError("start is after end")
+        proxy_configuration = await Actor.create_proxy_configuration(
+            actor_proxy_input=actor_input.get("proxyConfiguration"))
+        proxy = await proxy_configuration.new_url() if proxy_configuration else None
+        Actor.log.info("Using Apify Proxy." if proxy else "No proxy; requests go out from the platform's IP.")
         dataset = await Actor.open_dataset(name=DATASET_NAME)
         done = {item["disclosure_index"] async for item in dataset.iterate_items(fields=["disclosure_index"])}
         Actor.log.info(f"{len(done)} disclosures are already in the dataset '{DATASET_NAME}'; they are skipped.")
@@ -38,7 +44,7 @@ async def main() -> None:
             pushed.append(record["disclosure_index"])
 
         await Actor.set_status_message(f"Fetching {start:%d.%m.%Y}-{end:%d.%m.%Y}.")
-        await asyncio.to_thread(fetch_range, start, end, done, push)
+        await asyncio.to_thread(fetch_range, start, end, done, push, proxy)
         Actor.log.info(f"Pushed {len(pushed)} disclosures to the dataset '{DATASET_NAME}'.")
         await Actor.set_status_message(f"Done: {len(pushed)} disclosures pushed to '{DATASET_NAME}'.")
 
