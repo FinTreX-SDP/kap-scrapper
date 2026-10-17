@@ -31,6 +31,10 @@ CATCH_UP_MINUTES = 10
 RETRY_INTERVAL = 300  # seconds before a disclosure that failed is tried again
 MAX_FAILURES = 3  # attempts per disclosure before the watcher leaves it to kap_history.py
 WORKERS = 4  # new disclosures come a few at a time
+# Downloading an attachment takes minutes (KAP sends ~10 KB/s per connection) but little memory; reading it
+# takes seconds of CPU and most of the memory. So however many workers download, only this many read at once.
+EXTRACT_SLOTS = 2
+extracting = threading.BoundedSemaphore(EXTRACT_SLOTS)
 
 
 def log(message: str) -> None:
@@ -48,7 +52,9 @@ def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclos
     texts = {}
     for file_id in kap_attachments.to_read({file_id: a["file_name"] for file_id, a in page["attachments"].items()}):
         a = page["attachments"][file_id]
-        texts[file_id] = result = kap_attachments.extract(kap_get(file_client, a["url"]))
+        data = kap_get(file_client, a["url"])
+        with extracting:
+            texts[file_id] = result = kap_attachments.extract(data)
         log(f"  attachment {d.disclosureIndex} '{a['file_name']}': {result['page_count']} pages, "
             f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
     return disclosure_record(list_fields(d), page, items, texts)

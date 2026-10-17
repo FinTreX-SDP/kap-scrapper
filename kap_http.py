@@ -48,6 +48,8 @@ class Gate:
     def pause(self, seconds: float, reason: str) -> None:
         """Hold every thread for `seconds`."""
         if not self.enabled:
+            print(f"[{time.strftime('%H:%M:%S')}] KAP blocked a request ({reason}), trying again from another IP.",
+                  flush=True)
             return
         with self.lock:
             now = time.monotonic()
@@ -77,8 +79,13 @@ def file_size(data: bytes) -> int | None:
     return None
 
 
+def _log_retry(state) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] Retrying {state.args[1]}: {state.outcome.exception()!r}", flush=True)
+
+
 @retry(stop=stop_after_attempt(5),  # never retry Ctrl+C (not an Exception)
-       retry=retry_if_exception_type(Exception) & retry_if_not_exception_type((RateLimited, TooSlow)), reraise=True)
+       retry=retry_if_exception_type(Exception) & retry_if_not_exception_type((RateLimited, TooSlow)), reraise=True,
+       before_sleep=_log_retry)
 def _get_once(client: httpx.Client, url: str) -> bytes:
     gate.wait()
     started = time.monotonic()

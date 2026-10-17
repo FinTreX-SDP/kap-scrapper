@@ -11,6 +11,9 @@ ENV TZ=Europe/Istanbul \
     TESSERACT_CMD=/usr/bin/tesseract \
     TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata \
     PYTHONUNBUFFERED=1
+# glibc gives each thread its own heap and keeps what is freed there, so with dozens of worker threads
+# memory grows until the Actor runs out of it. Two heaps hand freed memory back.
+ENV MALLOC_ARENA_MAX=2
 
 WORKDIR /app
 COPY requirements.txt .
