@@ -21,7 +21,7 @@ from kap_output import as_json
 DATASET_NAME = "kap-disclosures"
 # Apify runs far from KAP, so each attachment downloads even slower than at home; more downloads at once
 # make up for it. Reading them is limited separately (kap_watch.EXTRACT_SLOTS), so memory stays bounded.
-WORKERS = 128
+WORKERS = 48
 
 
 async def main() -> None:
@@ -47,7 +47,8 @@ async def main() -> None:
             pushed.append(record["disclosure_index"])
 
         await Actor.set_status_message(f"Fetching {start:%d.%m.%Y}-{end:%d.%m.%Y}.")
-        await asyncio.to_thread(fetch_range, start, end, done, push, proxy, WORKERS)
+        await asyncio.to_thread(fetch_range, start, end, done, push,
+                                [proxy] if proxy else None, WORKERS)
         Actor.log.info(f"Pushed {len(pushed)} disclosures to the dataset '{DATASET_NAME}'.")
         await Actor.set_status_message(f"Done: {len(pushed)} disclosures pushed to '{DATASET_NAME}'.")
 

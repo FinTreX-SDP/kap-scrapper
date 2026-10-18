@@ -63,6 +63,12 @@ def append_record(record: dict) -> None:
         f.write(line)
 
 
+def read_written() -> bytes:
+    """The JSON Lines file between two records, so it can be copied while records are being added."""
+    with _write_lock:
+        return JSONL_PATH.read_bytes() if JSONL_PATH.exists() else b""
+
+
 def stop_writing() -> None:
     """Let a record being written finish and keep any other from starting, so the process can exit without
     leaving half a line behind. Call it only on the way out: later writes wait forever."""

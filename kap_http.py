@@ -1,4 +1,5 @@
 """HTTP helper shared by the scrapers: retries transient errors and waits out KAP's rate limit."""
+import itertools
 import threading
 import time
 
@@ -8,7 +9,7 @@ from tenacity import retry, retry_if_exception_type, retry_if_not_exception_type
 # KAP blocks an IP that sends too many requests. It has answered 429, and its firewall drops every
 # connection without an answer. On 15.10.2026 it blocked after ~100 requests, however fast they came,
 # for ~3.5 minutes each time. So requests are not spaced out; at a block every thread pauses.
-# Through a proxy each request comes from another IP (see connection_options), so the gate is turned off
+# Through proxies each request comes from another IP (see connection_options), so the gate is turned off
 # and a blocked request is tried again at once.
 BLOCKED_STATUSES = {403, 429, 503}  # how KAP or its firewall refuses too many requests
 RATE_LIMIT_PAUSE = 240  # seconds
@@ -63,13 +64,32 @@ class Gate:
 gate = Gate()
 
 
-def connection_options(proxy: str | None) -> dict:
-    """httpx.Client options for requests through `proxy`, if any. The proxy sends each new connection out
-    from another IP, so through it no connection is kept open, and HTTP/2, which would share one connection
-    among all requests, is not used: each request, a retry of a blocked one too, comes from a new IP."""
-    if not proxy:
+class RotatingProxies(httpx.BaseTransport):
+    """Sends each request through the next proxy in turn, on a new connection: Apify Proxy gives each new
+    connection another IP, and a list of proxies spreads the requests over their IPs."""
+
+    def __init__(self, proxies: list[str]):
+        self.transports = [httpx.HTTPTransport(proxy=p, limits=httpx.Limits(max_keepalive_connections=0))
+                           for p in proxies]
+        self.turn = itertools.cycle(self.transports)
+        self.lock = threading.Lock()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        with self.lock:
+            transport = next(self.turn)
+        return transport.handle_request(request)
+
+    def close(self) -> None:
+        for transport in self.transports:
+            transport.close()
+
+
+def connection_options(proxies: list[str] | None) -> dict:
+    """httpx.Client options for requests through `proxies`, if any. HTTP/2, which would share one connection
+    among all requests, is then not used: each request, a retry of a blocked one too, comes from a new IP."""
+    if not proxies:
         return {"http2": True}
-    return {"proxy": proxy, "limits": httpx.Limits(max_keepalive_connections=0)}
+    return {"transport": RotatingProxies(proxies)}
 
 
 def file_size(data: bytes) -> int | None:

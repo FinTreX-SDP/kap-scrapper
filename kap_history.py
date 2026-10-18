@@ -32,15 +32,15 @@ PROGRESS_INTERVAL = 60  # seconds between progress lines
 
 
 def fetch_range(start: date, end: date, skip: set[int], write: Callable[[dict], None],
-                proxy: str | None = None, workers: int = WORKERS) -> None:
+                proxies: list[str] | None = None, workers: int = WORKERS) -> None:
     """Fetch the disclosures published from `start` to `end` whose disclosure_index is not in `skip`, and pass
     each record to `write`, from the worker threads, once it is complete. A disclosure that fails is logged
-    and left out. Returns when every disclosure has been tried. Every request goes through `proxy`, if given,
-    and then from a new IP each time, so a block is retried at once instead of waited out."""
-    if proxy:
+    and left out. Returns when every disclosure has been tried. Every request goes through the next of `proxies`, if
+    given, and so from a new IP each time, so a block is retried at once instead of waited out."""
+    if proxies:
         gate.enabled = False
     jobs: queue.Queue = queue.Queue()
-    with httpx.Client(headers=HEADERS, timeout=60, **connection_options(proxy)) as client:  # pages and lists; they are small
+    with httpx.Client(headers=HEADERS, timeout=60, **connection_options(proxies)) as client:  # pages and lists; they are small
 
         def handle(file_client: httpx.Client, d: Disclosure) -> None:
             try:
@@ -48,7 +48,7 @@ def fetch_range(start: date, end: date, skip: set[int], write: Callable[[dict], 
             except Exception as e:
                 log(f"  {d.disclosureIndex} failed, will retry on the next run: {e!r}")
 
-        start_workers(workers, jobs, handle, proxy)
+        start_workers(workers, jobs, handle, proxies)
         for first, last in months(start, end):
             try:
                 listed = fetch_list(client, first, last)

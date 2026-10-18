@@ -61,11 +61,11 @@ def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclos
 
 
 def start_workers(count: int, jobs: queue.Queue, handle: Callable[[httpx.Client, Disclosure], None],
-                  proxy: str | None = None) -> None:
+                  proxies: list[str] | None = None) -> None:
     """Start `count` threads that pass each disclosure put in `jobs` to `handle`, together with a client of
     their own for attachments: KAP sends ~10 KB/s per connection, so each download needs its own."""
     def work() -> None:
-        with httpx.Client(headers=HEADERS, timeout=ATTACHMENT_TIMEOUT, **connection_options(proxy)) as file_client:
+        with httpx.Client(headers=HEADERS, timeout=ATTACHMENT_TIMEOUT, **connection_options(proxies)) as file_client:
             while True:
                 d = jobs.get()
                 try:
