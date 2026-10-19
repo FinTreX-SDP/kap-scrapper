@@ -23,10 +23,17 @@ INDEX_RE = re.compile(r'\{"disclosure_index": (\d+)')  # the first key of every 
 _write_lock = threading.Lock()
 
 
+def unreadable(error: Exception) -> dict:
+    """The place of kap_attachments.extract()'s result for a file it failed on: file_type 'error' and why."""
+    return {"file_type": "error", "page_count": 0, "ocr_pages": 0, "skipped_pages": 0, "text": "", "tables": [],
+            "error": repr(error)}
+
+
 def disclosure_record(listed: dict, page: dict, financial_items: list[dict], texts: dict[str, dict]) -> dict:
     """One disclosure as plain data: `listed`, its fields from the list, then everything read from its page,
     financial statements and attachments. `texts` maps the file id of each attachment that was read to
-    kap_attachments.extract()'s result; the other attachments are recorded as skipped. Dates stay date objects."""
+    kap_attachments.extract()'s result, or unreadable()'s; the other attachments are recorded as skipped.
+    Dates stay date objects."""
     # Statements in name order, as in the records written before; items in page order.
     items = sorted(financial_items, key=lambda i: (i["statement"] is None, i["statement"] or "", i["row_no"]))
     statements = [{**dict(zip(STATEMENT_KEYS, key)), "items": [{k: item[k] for k in ITEM_KEYS} for item in group]}
@@ -36,6 +43,7 @@ def disclosure_record(listed: dict, page: dict, financial_items: list[dict], tex
         result = texts.get(file_id, SKIPPED)
         attachments.append({"file_id": file_id, "file_name": a["file_name"], "url": a["url"],
                             **{k: result[k] for k in TEXT_KEYS},
+                            **({"error": result["error"]} if "error" in result else {}),
                             "tables": [{"page": page_no, "method": method, "rows": rows}
                                        for page_no, method, rows in result["tables"] if rows]})
     # A financial report's fields are its statements, so they are left out to avoid storing them twice.

@@ -58,7 +58,7 @@ kind, project = sys.argv[1], os.environ["PROJECT"]
 role = f"arn:aws:iam::{os.environ['ACCOUNT']}:role/{project}"
 logs = {"logDriver": "awslogs", "options": {"awslogs-group": f"/ecs/{project}", "awslogs-stream-prefix": kind,
                                             "awslogs-region": os.environ["AWS_DEFAULT_REGION"]}}
-if kind == "scraper":  # 1 vCPU and 4 GB, as the 4 GB Apify runs had; peak memory there was ~1 GB
+if kind == "scraper":  # 1 vCPU and 4 GB; peak memory in tests was ~1 GB
     size, image = ("1024", "4096"), f"{os.environ['REGISTRY']}/{project}:latest"
     container = {"command": ["python", "kap_aws.py"], "environment": [{"name": "BUCKET", "value": os.environ["BUCKET"]}],
                  "stopTimeout": 120}  # time to upload the file when stopped

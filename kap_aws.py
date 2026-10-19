@@ -25,7 +25,7 @@ from kap_output import DATA_DIR, JSONL_PATH, append_record, read_written, writte
 from kap_watch import log
 
 UPLOAD_INTERVAL = 300  # seconds
-# As on Apify: many downloads at once make up for KAP's ~10 KB/s per connection, and reading the files is
+# Many downloads at once make up for KAP's ~10 KB/s per connection, and reading the files is
 # limited separately (kap_watch.EXTRACT_SLOTS), so memory stays bounded.
 WORKERS = 48
 

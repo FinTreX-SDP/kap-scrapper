@@ -58,24 +58,25 @@ Bu komut canlı izleyiciyi arka planda başlatır. Çıktılar yine projedeki `d
 - **Kod ya da `companies.txt` değişince** `docker compose up -d --build` ile image'ı yeniden oluşturun.
 - **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. İkisi aynı dosyaya yazar.
 
-## Apify ile geçmiş
+## AWS ile geçmiş
 
-Geçmiş komutu [Apify](https://apify.com) üzerinde de çalışır, bilgisayarın açık kalması gerekmez. Canlı izleyici Apify'da çalışmaz; onu Docker ile çalıştırın.
+Geçmiş komutu AWS'de (Frankfurt, ECS Fargate) çalışır, bilgisayarın açık kalması gerekmez. Aralık parçalara bölünür, her parçayı ayrı bir görev çeker. KAP çok istek gönderen IP'yi engellediği için istekler `aws/` içindeki squid proxy'lerinden sırayla gider. Komutlar Git Bash'te proje klasöründen çalıştırılır; AWS CLI ve Docker Desktop gerekir.
 
-İlk kurulum (Node.js gerekir):
-
-```powershell
-npx apify-cli login   # Apify Console > Settings > API & Integrations sayfasındaki token ile
-npx apify-cli push    # Actor'ı Apify'da oluşturur ya da günceller
+```bash
+aws login                                       # tarayıcıda AWS'ye giriş; oturum süresi dolunca tekrar
+bash aws/setup.sh                               # ilk kurulum; kod ya da companies.txt değişince de çalıştırın
+bash aws/run.sh 01.12.2022 18.10.2026 8 40      # aralık, görev sayısı, proxy sayısı
+bash aws/status.sh                              # çalışan görevler ve S3'teki dosyalar
+aws logs tail /ecs/kapscrapper --follow         # canlı log
+bash aws/stop.sh                                # hepsini durdurur; `stop.sh proxy` yalnızca proxy'leri
 ```
 
-Ardından Apify Console'da **KAP history** Actor'ını açın, başlangıç ve bitiş günlerini `GG.AA.YYYY` biçiminde girip **Start**'a basın.
-
-- **Sonuç.** Bildirimler `kap-disclosures` adlı Dataset'te toplanır (Storage > Datasets). Her kayıt `disclosures.jsonl` dosyasındaki bir satırla aynıdır. Console'dan JSON, CSV ya da Excel olarak indirilebilir.
-- **Devam etme.** Dataset'te olan bildirimler atlanır. Yarıda kalan bir aralığı yeniden çalıştırmak kaldığı yerden devam eder.
-- **Süre sınırı.** Apify run'ı varsayılan olarak 1 saatte durdurur. Uzun aralıklar için Start'tan önce Run options > Timeout değerini artırın (0 sınırsız demektir). Süre dolup kesilen run, aynı aralıkla yeniden çalıştırılınca devam eder.
-- **Maliyet.** 1 GB bellekle her saat 1 compute unit (yaklaşık 0,20 $) harcanır. Bir ay yaklaşık 2 saat sürer. 08.10.2026 testi (29 bildirim) 77 saniye sürdü, en fazla 288 MB bellek kullandı ve 0,004 $ tuttu.
-- **Kod ya da `companies.txt` değişince** `npx apify-cli push` ile yeniden yükleyin.
+- **Sonuç.** Her görev kendi aralığını `s3://kapscrapper-<hesap>-eu-central-1/disclosures/<ilk gün>_<son gün>.jsonl` dosyasına yazar. Her satır `disclosures.jsonl` dosyasındaki bir satırla aynıdır. İndirmek için: `aws s3 sync s3://kapscrapper-<hesap>-eu-central-1/disclosures data/aws`.
+- **Devam etme.** Dosya 5 dakikada bir ve görev durdurulunca S3'e yüklenir. Aynı komut yeniden çalıştırılınca dosyadaki bildirimler atlanır.
+- **Eksiksizlik.** Hata veren bildirimler ve listeler, görevin sonunda listeler yeniden çekilerek 5 dakika arayla 3 tura kadar yeniden denenir. Görev logunun sonunda `Complete: ...` ya da eksiklerin numaralarıyla `Incomplete: ...` yazar. Okunamayan bir ek bildirimi düşürmez; `file_type` değeri `error` olur, nedeni `error` alanındadır.
+- **Proxy'ler.** Her proxy'den aynı anda en fazla 8 istek gider; KAP'ın engellediği proxy 4 dakika dinlenir. Proxy'ler 12 saat sonra kendiliğinden kapanır.
+- **Maliyet.** 8 görev ve 40 proxy saatte yaklaşık 1,3 $ tutar. 01.12.2022–18.10.2026 aralığı (~48.000 bildirim) 7–8 saat sürer.
+- **Kaldırma.** `bash aws/teardown.sh` her şeyi siler, S3'teki veriyi bırakır.
 
 ## Kullanım
 
@@ -146,8 +147,8 @@ Her bildirimin bütün ekleri, türüne bakılmadan indirilip okunur. Yalnızca 
 companies.txt         Bildirimleri toplanan şirketler
 kap_watch.py          Canlı izleyici; bir bildirimi baştan sona işleyen ortak kod da burada
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
-kap_apify.py          Apify'da geçmiş: kap_history.py'nin işini yapar, sonuçları Dataset'e yazar
-.actor/               Apify Actor tanımı ve giriş formu
+kap_aws.py            AWS'de geçmiş: kap_history.py'nin işini yapar, sonuçları S3'e yazar
+aws/                  AWS kurulumu, çalıştırma ve durdurma betikleri, squid proxy imajı
 kap_disclosures.py    Bildirim listesini çeker
 kap_details.py        Bildirim sayfasını çeker ve ayrıştırır
 kap_financials.py     Finansal raporlardan mali tabloları çıkarır

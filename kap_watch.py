@@ -25,7 +25,7 @@ import kap_details
 import kap_financials
 from kap_disclosures import HEADERS, Disclosure, fetch_list, list_fields
 from kap_http import ATTACHMENT_TIMEOUT, connection_options, kap_get
-from kap_output import DATA_DIR, append_record, disclosure_record, stop_writing, written_indexes
+from kap_output import DATA_DIR, append_record, disclosure_record, stop_writing, unreadable, written_indexes
 
 CATCH_UP_MINUTES = 10
 RETRY_INTERVAL = 300  # seconds before a disclosure that failed is tried again
@@ -52,9 +52,14 @@ def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclos
     texts = {}
     for file_id in kap_attachments.to_read({file_id: a["file_name"] for file_id, a in page["attachments"].items()}):
         a = page["attachments"][file_id]
-        data = kap_get(file_client, a["url"])
-        with extracting:
-            texts[file_id] = result = kap_attachments.extract(data)
+        data = kap_get(file_client, a["url"])  # a failed download fails the disclosure, so it is tried again
+        try:
+            with extracting:
+                texts[file_id] = result = kap_attachments.extract(data)
+        except Exception as e:  # a file that cannot be read would fail every time; record it as such instead
+            texts[file_id] = result = unreadable(e)
+            log(f"  attachment {d.disclosureIndex} '{a['file_name']}' could not be read: {e!r}")
+            continue
         log(f"  attachment {d.disclosureIndex} '{a['file_name']}': {result['page_count']} pages, "
             f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
     return disclosure_record(list_fields(d), page, items, texts)

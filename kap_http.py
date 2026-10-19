@@ -64,23 +64,92 @@ class Gate:
 gate = Gate()
 
 
-class RotatingProxies(httpx.BaseTransport):
-    """Sends each request through the next proxy in turn, on a new connection: Apify Proxy gives each new
-    connection another IP, and a list of proxies spreads the requests over their IPs."""
+# KAP drops connections from an IP that has too many open: on 18.10.2026 sixteen proxies taking ~24 each
+# were blocked within seconds, while ~10 per IP never were. So each proxy takes at most this many
+# requests at once, and the others wait for a free one.
+MAX_PER_PROXY = 8
+# With proxies a blocked request is sent again at once through another proxy, which may be blocked too.
+MAX_PROXY_ATTEMPTS = 10
+# Shared by all clients, as all of them use the same proxies.
+resting_until: dict[str, float] = {}  # proxy -> time.monotonic() when it is used again
+in_use: dict[str, int] = {}  # proxy -> requests going through it now
+proxies_changed = threading.Condition()
 
-    def __init__(self, proxies: list[str]):
-        self.transports = [httpx.HTTPTransport(proxy=p, limits=httpx.Limits(max_keepalive_connections=0))
-                           for p in proxies]
-        self.turn = itertools.cycle(self.transports)
-        self.lock = threading.Lock()
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        with self.lock:
-            transport = next(self.turn)
-        return transport.handle_request(request)
+class ReleasingStream(httpx.SyncByteStream):
+    """A response body that frees its proxy for the next request once it is read or closed."""
+
+    def __init__(self, stream: httpx.SyncByteStream, release):
+        self.stream, self.release = stream, release
+
+    def __iter__(self):
+        yield from self.stream
 
     def close(self) -> None:
-        for transport in self.transports:
+        try:
+            self.stream.close()
+        finally:
+            if self.release:
+                self.release()
+                self.release = None  # once, however often it is closed
+
+
+class RotatingProxies(httpx.BaseTransport):
+    """Sends each request through the next proxy in turn, on a new connection, so the requests spread over
+    the proxies' IPs. A proxy takes at most MAX_PER_PROXY requests at once, and one that KAP blocks rests
+    for RATE_LIMIT_PAUSE seconds while the others go on, as sending more from a blocked IP keeps it blocked."""
+
+    def __init__(self, proxies: list[str]):
+        self.proxies = proxies
+        self.transports = {p: httpx.HTTPTransport(proxy=p, limits=httpx.Limits(max_keepalive_connections=0))
+                           for p in proxies}
+        self.turn = itertools.cycle(proxies)
+
+    def take_proxy(self) -> str:
+        """The next proxy that is neither resting nor full, counted as in use; waits until there is one."""
+        with proxies_changed:
+            while True:
+                now = time.monotonic()
+                for _ in self.proxies:
+                    proxy = next(self.turn)
+                    if resting_until.get(proxy, 0) <= now and in_use.get(proxy, 0) < MAX_PER_PROXY:
+                        in_use[proxy] = in_use.get(proxy, 0) + 1
+                        return proxy
+                resting = [resting_until[p] - now for p in self.proxies if resting_until.get(p, 0) > now]
+                proxies_changed.wait(min(resting, default=None))  # woken when a request frees a proxy
+
+    def free_proxy(self, proxy: str) -> None:
+        with proxies_changed:
+            in_use[proxy] -= 1
+            proxies_changed.notify()
+
+    def rest(self, proxy: str, reason: str) -> None:
+        with proxies_changed:
+            if resting_until.get(proxy, 0) > time.monotonic():
+                return  # another request already found it blocked
+            resting_until[proxy] = time.monotonic() + RATE_LIMIT_PAUSE
+        print(f"[{time.strftime('%H:%M:%S')}] KAP blocked {proxy} ({reason}), resting it "
+              f"{RATE_LIMIT_PAUSE // 60} minutes.", flush=True)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        proxy = self.take_proxy()
+        try:
+            response = self.transports[proxy].handle_request(request)
+        except BaseException as e:
+            self.free_proxy(proxy)
+            if isinstance(e, httpx.RemoteProtocolError):  # dropped before any answer
+                self.rest(proxy, "connection dropped")
+            raise
+        if response.status_code in BLOCKED_STATUSES:
+            self.rest(proxy, f"HTTP {response.status_code}")
+        if response.is_closed:  # read already, so it will not be closed again
+            self.free_proxy(proxy)
+        else:
+            response.stream = ReleasingStream(response.stream, lambda: self.free_proxy(proxy))
+        return response
+
+    def close(self) -> None:
+        for transport in self.transports.values():
             transport.close()
 
 
@@ -131,8 +200,9 @@ def _get_once(client: httpx.Client, url: str) -> bytes:
 
 
 def kap_get(client: httpx.Client, url: str) -> bytes:
-    """GET a KAP url and return the body. When KAP blocks, pause and retry; raise RateLimited if it keeps blocking."""
-    for _ in range(MAX_RATE_LIMIT_PAUSES):
+    """GET a KAP url and return the body. When KAP blocks, pause and retry, or through proxies retry at once
+    through another; raise RateLimited if it keeps blocking."""
+    for _ in range(MAX_RATE_LIMIT_PAUSES if gate.enabled else MAX_PROXY_ATTEMPTS):
         try:
             return _get_once(client, url)
         except RateLimited as e:
