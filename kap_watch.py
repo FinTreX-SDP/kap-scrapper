@@ -33,7 +33,8 @@ MAX_FAILURES = 3  # attempts per disclosure before the watcher leaves it to kap_
 WORKERS = 4  # new disclosures come a few at a time
 # Downloading an attachment takes minutes (KAP sends ~10 KB/s per connection) but little memory; reading it
 # takes seconds of CPU and most of the memory. So however many workers download, only this many read at once.
-EXTRACT_SLOTS = 2
+# A scanned document holds its slot for minutes of OCR, so there are enough slots for small files to pass.
+EXTRACT_SLOTS = 4
 extracting = threading.BoundedSemaphore(EXTRACT_SLOTS)
 
 

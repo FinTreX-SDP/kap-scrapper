@@ -14,6 +14,8 @@ ENV TZ=Europe/Istanbul \
 # glibc gives each thread its own heap and keeps what is freed there, so with dozens of worker threads
 # memory grows until the task runs out of it. Two heaps hand freed memory back.
 ENV MALLOC_ARENA_MAX=2
+# Several files are OCR'd at once (kap_watch.EXTRACT_SLOTS), so each Tesseract keeps to one thread.
+ENV OMP_THREAD_LIMIT=1
 
 WORKDIR /app
 COPY requirements.txt .

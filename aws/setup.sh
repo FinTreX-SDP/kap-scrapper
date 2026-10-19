@@ -41,6 +41,7 @@ echo "Logs and cluster"
 aws logs create-log-group --log-group-name "/ecs/$PROJECT" >/dev/null 2>&1 || true
 aws logs put-retention-policy --log-group-name "/ecs/$PROJECT" --retention-in-days 30
 aws ecs create-cluster --cluster-name "$PROJECT" >/dev/null
+aws ecs update-cluster-settings --cluster "$PROJECT" --settings name=containerInsights,value=enabled >/dev/null  # memory and CPU per task
 
 echo "Security groups"
 SCRAPER_SG=$(sg "$PROJECT-scrapers" "KAP scrapers, no inbound")
@@ -58,8 +59,8 @@ kind, project = sys.argv[1], os.environ["PROJECT"]
 role = f"arn:aws:iam::{os.environ['ACCOUNT']}:role/{project}"
 logs = {"logDriver": "awslogs", "options": {"awslogs-group": f"/ecs/{project}", "awslogs-stream-prefix": kind,
                                             "awslogs-region": os.environ["AWS_DEFAULT_REGION"]}}
-if kind == "scraper":  # 1 vCPU and 4 GB; peak memory in tests was ~1 GB
-    size, image = ("1024", "4096"), f"{os.environ['REGISTRY']}/{project}:latest"
+if kind == "scraper":  # OCR made 1 vCPU the bottleneck; with 8 GB half the scrapers were killed after 2-8 h (19.10.2026)
+    size, image = ("2048", "16384"), f"{os.environ['REGISTRY']}/{project}:latest"
     container = {"command": ["python", "kap_aws.py"], "environment": [{"name": "BUCKET", "value": os.environ["BUCKET"]}],
                  "stopTimeout": 120}  # time to upload the file when stopped
 else:
