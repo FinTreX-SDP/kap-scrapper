@@ -1,41 +1,25 @@
-"""Download disclosure attachments and extract their text and tables.
+"""Extract the text and tables of disclosure attachments, and decide which attachments are worth reading.
 
 Text comes from the PDF text layer, or OCR for scanned pages and images. Tables come from the text layer
 (PyMuPDF table finder) or, on scans, from ruled grid lines whose cells are OCR'd one by one.
-Run kap_details.py first; it lists the attachments. Files are processed in memory and never saved.
-Only attachments of the disclosure types in EXTRACT_TYPES are read, and not the English version of a
-document that also comes in Turkish; the others are marked as skipped.
-
-Usage:
-    python kap_attachments.py              # all attachments without extracted text
-    python kap_attachments.py --limit 20   # only 20 (most recent disclosures first)
+Files are processed in memory and never saved. Every attachment of every disclosure is read, except the
+English version of a document that also comes in Turkish.
 """
-import argparse
 import io
 import os
 import re
-import time
 import unicodedata
 from collections import defaultdict
-from datetime import datetime
-from itertools import groupby
-from operator import itemgetter
 from pathlib import Path
 
 import cv2
-import duckdb
-import httpx
 import numpy as np
-import polars as pl
 import pymupdf
 import pytesseract
 from dotenv import load_dotenv
 from PIL import Image, UnidentifiedImageError
-from tqdm import tqdm
 
-from kap_disclosures import HEADERS, REQUEST_DELAY
-from kap_http import RateLimited, kap_get
-from kap_output import DB_PATH, export_to_excel, write_detail_file
+from kap_http import file_size
 
 load_dotenv(Path(__file__).parent / ".env")
 pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
@@ -47,42 +31,6 @@ MAX_OCR_PAGES = 50  # OCR takes ~6 s per page; pages beyond this are counted as 
 MIN_CELL_SIZE = 20  # px at OCR_DPI; smaller enclosed gaps are line noise, not cells
 MIN_TABLE_CELLS = 4  # fewer enclosed cells is a framed box or underline, not a table
 ROW_TOLERANCE = 15  # px; cells whose tops are this close belong to the same row
-
-# Disclosure types (the `title` column of disclosures) whose attachments are read. These attachments hold
-# what the disclosure page lacks, such as investor presentations and earnings releases. Other types'
-# attachments are mostly the formal documents behind what the page already says, or long routine reports,
-# so they are listed but not downloaded.
-EXTRACT_TYPES = (
-    "Özel Durum Açıklaması (Genel)",
-    "Kredi Derecelendirmesi",
-    "Değerleme Raporu",
-    "Halka Arz Fiyatının Belirlenmesinde Esas Alınan Varsayımlara İlişkin Değerlendirme Raporu",
-    "Sermaye Artırımından Elde Edilecek - Edilen Fonun Kullanımına İlişkin Rapor",
-)
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS attachment_texts (
-    disclosure_index INTEGER,
-    file_id VARCHAR,
-    file_type VARCHAR,        -- 'pdf', an image format such as 'png', 'unsupported', or 'skipped' (not read, see EXTRACT_TYPES)
-    page_count INTEGER,
-    ocr_pages INTEGER,        -- pages read with OCR
-    skipped_pages INTEGER,    -- scanned pages not read because of MAX_OCR_PAGES
-    text VARCHAR,
-    extracted_at TIMESTAMP,
-    PRIMARY KEY (disclosure_index, file_id)
-);
-CREATE TABLE IF NOT EXISTS attachment_tables (
-    disclosure_index INTEGER,
-    file_id VARCHAR,
-    page INTEGER,
-    table_no INTEGER,         -- numbered across the whole file
-    row_no INTEGER,
-    method VARCHAR,           -- 'text' (PDF text layer) or 'ocr' (grid cells OCR'd one by one)
-    cells VARCHAR[]
-);
-"""
-
 
 def clean_text(text: str) -> str:
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())
@@ -161,14 +109,10 @@ def extract_pdf(data: bytes) -> dict:
             "skipped_pages": skipped, "text": "\n\n".join(parts), "tables": tables}
 
 
-JAVA_BYTE_ARRAY_HEADER = b"\xac\xed\x00\x05ur\x00\x02[B"  # Java-serialized byte[] prefix
-
-
 def unwrap(data: bytes) -> bytes:
     """KAP wraps files in a serialized Java byte[]: 23-byte header, 4-byte length, then the file."""
-    if data.startswith(JAVA_BYTE_ARRAY_HEADER):
-        length = int.from_bytes(data[23:27], "big")
-        return data[27:27 + length]
+    if (size := file_size(data)) is not None:
+        return data[27:27 + size]
     return data
 
 
@@ -184,31 +128,6 @@ def extract(data: bytes) -> dict:
     text, page_tables = ocr_page(image.convert("L"))
     return {"file_type": image.format.lower(), "page_count": 1, "ocr_pages": 1, "skipped_pages": 0,
             "text": text, "tables": [(1, "ocr", rows) for rows in page_tables]}
-
-
-TABLE_ROW_SCHEMA = {"disclosure_index": pl.Int32, "file_id": pl.String, "page": pl.Int32, "table_no": pl.Int32,
-                    "row_no": pl.Int32, "method": pl.String, "cells": pl.List(pl.String)}
-
-
-def save(con: duckdb.DuckDBPyConnection, disclosure_index: int, file_id: str, result: dict) -> None:
-    con.begin()  # all or nothing, so a failed save never leaves partial rows behind
-    try:
-        table_rows = [
-            {"disclosure_index": disclosure_index, "file_id": file_id, "page": page, "table_no": table_no,
-             "row_no": row_no, "method": method, "cells": cells}
-            for table_no, (page, method, rows) in enumerate(result["tables"])
-            for row_no, cells in enumerate(rows)
-        ]
-        if table_rows:
-            df = pl.DataFrame(table_rows, schema=TABLE_ROW_SCHEMA)
-            con.execute("INSERT INTO attachment_tables BY NAME SELECT * FROM df")
-        con.execute("INSERT INTO attachment_texts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    [disclosure_index, file_id, result["file_type"], result["page_count"],
-                     result["ocr_pages"], result["skipped_pages"], result["text"], datetime.now()])
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
 
 
 ENGLISH_TAGS = {"en", "eng", "english", "ingilizce"}  # e.g. 'BİGTK (ENG).pdf', 'RAPORU_KAP EN.pdf'
@@ -240,90 +159,12 @@ def is_english(words: list[str]) -> bool:
     return len(ENGLISH_WORDS & set(words)) > len(TURKISH_WORDS & set(words))
 
 
-def to_read(title: str | None, file_names: dict[str, str]) -> set[str]:
-    """The file ids worth reading among one disclosure's attachments ({file_id: file_name}): none for a
-    disclosure type outside EXTRACT_TYPES, and no English version when the disclosure has a non-English
-    attachment too. The language is guessed from file names; when unsure, the attachment is read."""
-    if (title or "").strip() not in EXTRACT_TYPES:
-        return set()
+def to_read(file_names: dict[str, str]) -> set[str]:
+    """The file ids worth reading among one disclosure's attachments ({file_id: file_name}): all but the
+    English version of a document that also comes in Turkish. The language is guessed from file names; when
+    unsure, the attachment is read. If every attachment looks English, all are read, as there is no other copy."""
     words = {file_id: name_words(name) for file_id, name in file_names.items()}
     joined = {file_id: "".join(w) for file_id, w in words.items()}
     english = {file_id for file_id in file_names if is_english(words[file_id]) or any(  # e.g. 'Vkfyo07102026e.pdf'
         joined[file_id] in (joined[other] + "e", joined[other] + "en") for other in file_names if other != file_id)}
     return set(file_names) - english if len(english) < len(file_names) else set(file_names)
-
-
-def mark_skipped(con: duckdb.DuckDBPyConnection, disclosure_index: int, file_ids) -> None:
-    """Record attachments as skipped, i.e. not downloaded. Safe to repeat."""
-    for file_id in file_ids:
-        con.execute("INSERT OR IGNORE INTO attachment_texts VALUES (?, ?, 'skipped', 0, 0, 0, '', ?)",
-                    [disclosure_index, file_id, datetime.now()])
-
-
-def skip_unwanted(con: duckdb.DuckDBPyConnection) -> int:
-    """Mark waiting attachments that to_read() rejects as skipped and update their detail files. Catches
-    attachments listed by kap_details.py or before the rules changed. Returns how many were marked."""
-    rows = con.execute("""
-        SELECT a.disclosure_index, d.title, a.file_id, a.file_name, t.file_id IS NULL AS waiting
-        FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
-        LEFT JOIN attachment_texts t ON t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id
-        WHERE a.disclosure_index IN (
-            SELECT a2.disclosure_index FROM disclosure_attachments a2 WHERE NOT EXISTS (
-                SELECT 1 FROM attachment_texts t2 WHERE t2.disclosure_index = a2.disclosure_index AND t2.file_id = a2.file_id))
-        ORDER BY a.disclosure_index
-    """).fetchall()
-    marked = 0
-    for disclosure_index, group in groupby(rows, key=itemgetter(0)):
-        group = list(group)
-        read = to_read(group[0][1], {file_id: file_name for _, _, file_id, file_name, _ in group})
-        skipped = [file_id for _, _, file_id, _, waiting in group if waiting and file_id not in read]
-        if skipped:
-            mark_skipped(con, disclosure_index, skipped)
-            write_detail_file(con, disclosure_index)
-            marked += len(skipped)
-    return marked
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract text from KAP disclosure attachments.")
-    parser.add_argument("--limit", type=int, help="process at most this many attachments")
-    args = parser.parse_args()
-
-    con = duckdb.connect(str(DB_PATH))
-    con.execute(SCHEMA)
-    if count := skip_unwanted(con):
-        print(f"Skipped {count} attachments (disclosure types that are not read, or English duplicates)")
-    query = """
-        SELECT a.disclosure_index, a.file_id, a.url FROM disclosure_attachments a
-        WHERE NOT EXISTS (SELECT 1 FROM attachment_texts t
-                          WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)
-        ORDER BY a.disclosure_index DESC
-    """
-    if args.limit:
-        query += f" LIMIT {args.limit}"
-    todo = con.execute(query).fetchall()
-
-    done, failed = 0, []
-    try:
-        with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
-            for disclosure_index, file_id, url in tqdm(todo, desc="Attachments"):
-                try:
-                    save(con, disclosure_index, file_id, extract(kap_get(client, url)))
-                    write_detail_file(con, disclosure_index)
-                    done += 1
-                except RateLimited:
-                    raise
-                except Exception as e:  # keep going on long runs; failures are retried next run
-                    failed.append(file_id)
-                    tqdm.write(f"Failed {disclosure_index}/{file_id}: {e}")
-                time.sleep(REQUEST_DELAY)
-    except RateLimited:
-        print("KAP is still rate limiting after several pauses. Stopping; run again later to continue.")
-    finally:  # export whatever was saved, even after Ctrl+C
-        export_to_excel(con)
-        con.close()
-    print(f"Processed attachments: {done}, failed: {len(failed)}, remaining: {len(todo) - done - len(failed)}")
-
-
-if __name__ == "__main__":
-    main()

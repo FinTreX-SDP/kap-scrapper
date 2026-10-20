@@ -1,0 +1,8 @@
+services:
+  kap:
+    build: .
+    command: python kap_watch.py
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 1m

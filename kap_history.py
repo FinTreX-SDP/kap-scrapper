@@ -1,92 +1,103 @@
-"""Fetch every KAP disclosure published in a date range: lists, pages, financial statements and attachments.
+"""Fetch the KAP disclosures of the companies in companies.txt published in a date range and write each to
+data/disclosures.jsonl once its page, financial statements and attachments are read.
 
-kap_watch.py catches new disclosures live; this script fetches the past. Run one of them at a time,
-as DuckDB allows only one process to write to the database. Pages are fetched newest day first, while a
-background worker reads their attachments, which KAP serves slowly. What is already complete is skipped,
-so running the same command again continues where it stopped. Every disclosure whose page and
-attachments have all been read is appended to data/disclosures.jsonl. Stop with Ctrl+C.
+kap_watch.py catches new disclosures live; this script fetches the past. Run one of them at a time, as
+both write the same file. Lists are fetched a month at a time, as KAP returns a whole month in one
+response, and their disclosures are fetched newest first by WORKERS threads. Disclosures already in the
+file are skipped, so running the same command again continues where it stopped. What fails is tried
+again in a few more rounds at the end (see fetch_range). Stop with Ctrl+C.
 
 Usage:
     python kap_history.py --start 01.01.2025 --end 31.12.2025
 """
 import argparse
-import threading
+import queue
 import time
-from datetime import date, datetime, timedelta
+from collections.abc import Callable
+from datetime import date, datetime
 
-import duckdb
 import httpx
 
-import kap_attachments
-import kap_details
-import kap_financials
-from kap_disclosures import DATE_FORMAT, HEADERS, SCHEMA, fetch_day, save_to_db
-from kap_output import DATA_DIR, DB_PATH, JSONL_PATH, append_to_jsonl, export_to_excel
-from kap_watch import fetch_attachment, fetch_details, log
+from kap_disclosures import DATE_FORMAT, HEADERS, Disclosure, fetch_list, months
+from kap_http import connection_options, gate
+from kap_output import DATA_DIR, JSONL_PATH, append_record, stop_writing, written_indexes
+from kap_watch import fetch_disclosure, log, start_workers
 
-REQUEST_DELAY = 3  # seconds between requests of each worker; KAP blocks after ~100 requests in a few minutes
-
-LISTED_DAYS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS listed_days (
-    day DATE PRIMARY KEY      -- past day whose complete disclosure list is in the database
-)
-"""
-
-
-def fetch_day_pages(con: duckdb.DuckDBPyConnection, client: httpx.Client, day: date) -> None:
-    """Fetch the list of `day` (once for a past day) and the pages of its disclosures that have none yet."""
-    if not con.execute("SELECT count(*) FROM listed_days WHERE day = ?", [day]).fetchone()[0]:
-        save_to_db(con, fetch_day(client, day))
-        if day < date.today():  # today's list still grows
-            con.execute("INSERT INTO listed_days VALUES (?)", [day])
-        time.sleep(REQUEST_DELAY)
-    todo = con.execute("""
-        SELECT disclosure_index, disclosure_class, title FROM disclosures
-        WHERE CAST(publish_date AS DATE) = ? AND disclosure_index NOT IN (SELECT disclosure_index FROM disclosure_details)
-        ORDER BY publish_date DESC
-    """, [day]).fetchall()
-    if not todo:
-        return
-    log(f"{day:%d.%m.%Y}: fetching {len(todo)} pages.")
-    failed = 0
-    for disclosure_index, disclosure_class, title in todo:
-        try:
-            fetch_details(con, client, disclosure_index, disclosure_class, title)
-        except Exception as e:  # retried on the next run
-            failed += 1
-            log(f"  page {disclosure_index} failed, will retry on the next run: {e!r}")
-        time.sleep(REQUEST_DELAY)
-    log(f"{day:%d.%m.%Y}: fetched {len(todo) - failed} pages, {failed} failed.")
+# The workers overlap KAP's slow answers: a page takes 0.4-9 s to come, an attachment several minutes
+# at ~10 KB/s per connection.
+# KAP kept 10-30 KB/s on each of 12 connections at once without a stall (~230 KB/s in total), which is
+# about all the line takes. While some workers wait for attachments, the others go on with pages.
+WORKERS = 12
+PROGRESS_INTERVAL = 60  # seconds between progress lines
+# After the first pass the lists are fetched again and what is still missing, a disclosure or a whole month
+# that failed, is tried again, up to RETRY_ROUNDS times, RETRY_WAIT apart: longer than a block lasts.
+RETRY_ROUNDS = 3
+RETRY_WAIT = 300  # seconds
 
 
-def attachment_worker(con: duckdb.DuckDBPyConnection, start: date, end: date, pages_done: threading.Event) -> None:
-    """Read unread attachments of disclosures in the range, newest first, as their pages are saved."""
-    cur = con.cursor()  # DuckDB needs a separate cursor per thread
-    failed = set()  # (disclosure_index, file_id); retried on the next run, not over and over
-    with httpx.Client(headers=HEADERS, http2=True, timeout=120) as client:
-        while True:
-            last_round = pages_done.is_set()  # if so, no new attachments can appear after this query
-            todo = [job for job in cur.execute("""
-                SELECT a.disclosure_index, a.file_id, a.file_name, a.url
-                FROM disclosure_attachments a JOIN disclosures d USING (disclosure_index)
-                WHERE CAST(d.publish_date AS DATE) BETWEEN ? AND ? AND NOT EXISTS (
-                    SELECT 1 FROM attachment_texts t WHERE t.disclosure_index = a.disclosure_index AND t.file_id = a.file_id)
-                ORDER BY d.publish_date DESC
-            """, [start, end]).fetchall() if job[:2] not in failed]
-            if not todo:
-                if last_round:
-                    return
-                time.sleep(30)  # wait for more pages
-                continue
-            for disclosure_index, file_id, file_name, url in todo:
+def fetch_range(start: date, end: date, skip: set[int], write: Callable[[dict], None],
+                proxies: list[str] | None = None, workers: int = WORKERS) -> set[int]:
+    """Fetch the disclosures published from `start` to `end` whose disclosure_index is not in `skip`, and pass
+    each record to `write`, from the worker threads, once it is complete; each written one is added to `skip`.
+    What fails is tried again in up to RETRY_ROUNDS more rounds. Returns the disclosure_index of the listed
+    disclosures still missing, empty when the range is complete (a list that never came is logged).
+    Every request goes through the next of `proxies`, if given, and so from a new IP each time, so a block
+    is retried at once instead of waited out."""
+    if proxies:
+        gate.enabled = False
+    jobs: queue.Queue = queue.Queue()
+    listed: set[int] = set()
+    with httpx.Client(headers=HEADERS, timeout=60, **connection_options(proxies)) as client:  # pages and lists; they are small
+
+        def handle(file_client: httpx.Client, d: Disclosure) -> None:
+            try:
+                write(fetch_disclosure(client, file_client, d))
+                skip.add(d.disclosureIndex)
+            except Exception as e:
+                log(f"  {d.disclosureIndex} failed, will be tried again: {e!r}")
+
+        def queue_missing() -> int:
+            """Fetch the lists and queue what is not written yet; return how many lists failed."""
+            failed_lists = 0
+            for first, last in months(start, end):
                 try:
-                    result = fetch_attachment(cur, client, disclosure_index, file_id, url)
-                    log(f"  attachment {disclosure_index} '{file_name}': {result['page_count']} pages, "
-                        f"{result['ocr_pages']} OCR, {len(result['tables'])} tables")
+                    month = fetch_list(client, first, last)
                 except Exception as e:
-                    failed.add((disclosure_index, file_id))
-                    log(f"  attachment {disclosure_index} '{file_name}' failed, will retry on the next run: {e!r}")
-                time.sleep(REQUEST_DELAY)
+                    log(f"List of {first:%d.%m.%Y}-{last:%d.%m.%Y} failed, will be tried again: {e!r}")
+                    failed_lists += 1
+                    continue
+                listed.update(d.disclosureIndex for d in month)
+                todo = sorted((d for d in month if d.disclosureIndex not in skip), key=lambda d: d.published, reverse=True)
+                log(f"{first:%d.%m.%Y}-{last:%d.%m.%Y}: {len(month)} disclosures of the watched companies, "
+                    f"{len(todo)} to fetch.")
+                for d in todo:
+                    jobs.put(d)
+            return failed_lists
+
+        def wait_for_jobs() -> None:
+            last_progress = time.monotonic()
+            while jobs.unfinished_tasks:
+                time.sleep(1)  # short, so Ctrl+C is noticed
+                if time.monotonic() - last_progress > PROGRESS_INTERVAL:
+                    last_progress = time.monotonic()
+                    log(f"{jobs.unfinished_tasks} disclosures to go.")
+
+        start_workers(workers, jobs, handle, proxies)
+        for round_no in range(RETRY_ROUNDS + 1):
+            if round_no:
+                log(f"{len(listed - skip)} disclosures and {failed_lists} lists are missing; trying again in "
+                    f"{RETRY_WAIT // 60} minutes (round {round_no} of {RETRY_ROUNDS}).")
+                time.sleep(RETRY_WAIT)
+            failed_lists = queue_missing()
+            wait_for_jobs()
+            if not failed_lists and not listed - skip:
+                break
+    missing = listed - skip
+    if missing or failed_lists:
+        log(f"Incomplete: {len(missing)} disclosures and {failed_lists} lists still missing: {sorted(missing)}")
+    else:
+        log(f"Complete: all {len(listed)} disclosures listed from {start:%d.%m.%Y} to {end:%d.%m.%Y} are written.")
+    return missing
 
 
 def parse_day(text: str) -> date:
@@ -94,7 +105,7 @@ def parse_day(text: str) -> date:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fetch every KAP disclosure published in a date range.")
+    parser = argparse.ArgumentParser(description="Fetch the KAP disclosures of the watched companies in a date range.")
     parser.add_argument("--start", metavar="DD.MM.YYYY", type=parse_day, required=True, help="first day")
     parser.add_argument("--end", metavar="DD.MM.YYYY", type=parse_day, required=True, help="last day")
     args = parser.parse_args()
@@ -102,46 +113,21 @@ def main() -> None:
         parser.error("--start is after --end")
 
     DATA_DIR.mkdir(exist_ok=True)
-    con = duckdb.connect(str(DB_PATH))
-    con.execute(SCHEMA)
-    con.execute(kap_details.SCHEMA)
-    con.execute(kap_attachments.SCHEMA)
-    con.execute(kap_financials.SCHEMA)
-    con.execute(LISTED_DAYS_SCHEMA)
-    kap_attachments.skip_unwanted(con)
+    added = []
 
-    pages_done = threading.Event()
-    worker = threading.Thread(target=attachment_worker, args=(con, args.start, args.end, pages_done), daemon=True)
-    worker.start()
-    log(f"Fetching disclosures published from {args.start:%d.%m.%Y} to {args.end:%d.%m.%Y}, newest day first. "
+    def write(record: dict) -> None:
+        append_record(record)
+        added.append(record["disclosure_index"])
+
+    log(f"Fetching disclosures published from {args.start:%d.%m.%Y} to {args.end:%d.%m.%Y}, newest first. "
         "Ctrl+C to stop.")
-    appended = 0
     try:
-        with httpx.Client(headers=HEADERS, http2=True, timeout=60) as client:
-            day = args.end
-            while day >= args.start:
-                try:
-                    fetch_day_pages(con, client, day)
-                except Exception as e:  # e.g. the list request failed; the day is tried again on the next run
-                    log(f"{day:%d.%m.%Y} failed, will retry on the next run: {e!r}")
-                appended += append_to_jsonl(con)
-                day -= timedelta(days=1)
-        pages_done.set()
-        log("All pages fetched; waiting for the remaining attachments.")
-        while worker.is_alive():
-            worker.join(5)  # short, so Ctrl+C is noticed
-            appended += append_to_jsonl(con)
+        fetch_range(args.start, args.end, written_indexes(), write)
         log("Done.")
     except KeyboardInterrupt:
+        stop_writing()
         log("Stopping. Run the same command again to continue.")
-    finally:
-        appended += append_to_jsonl(con)
-        try:
-            export_to_excel(con)
-        except PermissionError:
-            log("Excel file is open, so it was not updated.")
-        con.close()
-    log(f"Added {appended} disclosures to {JSONL_PATH}.")
+    log(f"Added {len(added)} disclosures to {JSONL_PATH}.")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # KAP Scraper
 
-[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
+[KAP](https://www.kap.org.tr) bildirimlerini toplayan bir veri toplayıcı. Yalnızca `companies.txt` dosyasındaki şirketlerle ilgili bildirimleri alır. Model eğitimi için her bildirimi metni, mali tabloları ve önemli ekleriyle birlikte tek bir dosyada toplar. İki şekilde çalışır: yeni bildirimleri yayımlandıkları anda yakalar (**canlı**) ya da verilen tarih aralığındaki bildirimleri çeker (**geçmiş**).
 
 > Resmî değildir. KAP sitesinin kendi kullandığı, belgelenmemiş uç noktaları okur. İstek sıklığını düşük tutun.
 
@@ -8,11 +8,11 @@
 
 Her bildirim için aynı adımlar izlenir:
 
-1. **Liste.** Günün bildirim listesi KAP'tan çekilir. Fon bildirimleri hariçtir.
+1. **Liste.** Bildirim listesi KAP'tan çekilir ve hemen süzülür. Yalnızca [listedeki şirketlerle](#şirket-listesi) ilgili bildirimler kalır; diğerlerinin sayfaları hiç istenmez. Fon bildirimleri hariçtir.
 2. **Sayfa.** Bildirimin sayfası çekilir. Metni, alanları ve tabloları ayrıştırılır.
 3. **Mali tablolar.** Finansal raporlarda bilanço, gelir tablosu, nakit akış ve özkaynak tabloları sayısal değerler olarak çıkarılır.
 4. **Ekler.** Sadece değerli türlerin ekleri indirilir ve metni çıkarılır. Taranmış belgeler OCR ile okunur. Ayrıntılar: [Hangi ekler okunur](#hangi-ekler-okunur).
-5. **Kayıt.** Her şey `data/kap.duckdb` veritabanına yazılır. Sayfası ve ekleri tamamlanan bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir.
+5. **Kayıt.** Sayfası ve ekleri tamamlanan bildirim `data/disclosures.jsonl` dosyasına bir satır olarak eklenir. Veritabanı yoktur; bu dosya tek çıktıdır.
 
 ## Kurulum (Windows)
 
@@ -37,9 +37,50 @@ Ardından `.env` dosyasında iki yolu doldurun:
 - `TESSERACT_CMD`: `tesseract.exe` dosyasının tam yolu, genelde `C:\Program Files\Tesseract-OCR\tesseract.exe`.
 - `TESSDATA_PREFIX`: projedeki `tessdata` klasörünün tam yolu.
 
+## Docker ile kurulum
+
+Gereksinim: Docker Desktop. Tesseract, Türkçe OCR dosyası ve Türkiye saati image'ın içindedir; `.env` ve `tessdata` gerekmez.
+
+```powershell
+docker compose up -d --build
+```
+
+Bu komut canlı izleyiciyi arka planda başlatır. Çıktılar yine projedeki `data/` klasörüne yazılır.
+
+| Komut | Ne yapar |
+|---|---|
+| `docker compose logs -f` | İzleyicinin çıktısını gösterir |
+| `docker compose stop` | İzleyiciyi durdurur. Ctrl+C gibidir, çıktılar yazılıp kapanır |
+| `docker compose start` | İzleyiciyi yeniden başlatır |
+| `docker compose run --rm kap python kap_history.py --start 01.01.2025 --end 31.12.2025` | Geçmiş. Önce izleyiciyi durdurun |
+
+- **Otomatik başlama.** Siz durdurmadıkça izleyici, çökerse ve Docker Desktop her açıldığında kendiliğinden başlar. Bilgisayar açılınca çalışması için Docker Desktop ayarlarında "Start Docker Desktop when you sign in" seçili olmalı.
+- **Kod ya da `companies.txt` değişince** `docker compose up -d --build` ile image'ı yeniden oluşturun.
+- **Aynı anda tek süreç.** Container çalışırken Windows'ta `python kap_*.py` çalıştırmayın. İkisi aynı dosyaya yazar.
+
+## AWS ile geçmiş
+
+Geçmiş komutu AWS'de (Frankfurt, ECS Fargate) çalışır, bilgisayarın açık kalması gerekmez. Aralık parçalara bölünür, her parçayı ayrı bir görev çeker. KAP çok istek gönderen IP'yi engellediği için istekler `aws/` içindeki squid proxy'lerinden sırayla gider. Komutlar Git Bash'te proje klasöründen çalıştırılır; AWS CLI ve Docker Desktop gerekir.
+
+```bash
+aws login                                       # tarayıcıda AWS'ye giriş; oturum süresi dolunca tekrar
+bash aws/setup.sh                               # ilk kurulum; kod ya da companies.txt değişince de çalıştırın
+bash aws/run.sh 01.12.2022 18.10.2026 8 40      # aralık, görev sayısı, proxy sayısı
+bash aws/status.sh                              # çalışan görevler ve S3'teki dosyalar
+aws logs tail /ecs/kapscrapper --follow         # canlı log
+bash aws/stop.sh                                # hepsini durdurur; `stop.sh proxy` yalnızca proxy'leri
+```
+
+- **Sonuç.** Her görev kendi aralığını `s3://kapscrapper-<hesap>-eu-central-1/disclosures/<ilk gün>_<son gün>.jsonl` dosyasına yazar. Her satır `disclosures.jsonl` dosyasındaki bir satırla aynıdır. İndirmek için: `aws s3 sync s3://kapscrapper-<hesap>-eu-central-1/disclosures data/aws`.
+- **Devam etme.** Dosya 5 dakikada bir ve görev durdurulunca S3'e yüklenir. Aynı komut yeniden çalıştırılınca dosyadaki bildirimler atlanır.
+- **Eksiksizlik.** Hata veren bildirimler ve listeler, görevin sonunda listeler yeniden çekilerek 5 dakika arayla 3 tura kadar yeniden denenir. Görev logunun sonunda `Complete: ...` ya da eksiklerin numaralarıyla `Incomplete: ...` yazar. Okunamayan bir ek bildirimi düşürmez; `file_type` değeri `error` olur, nedeni `error` alanındadır.
+- **Proxy'ler.** Her proxy'den aynı anda en fazla 8 istek gider; KAP'ın engellediği proxy 4 dakika dinlenir. Proxy'ler 12 saat sonra kendiliğinden kapanır.
+- **Maliyet.** 8 görev ve 40 proxy saatte yaklaşık 1,3 $ tutar. 01.12.2022–18.10.2026 aralığı (~48.000 bildirim) 7–8 saat sürer.
+- **Kaldırma.** `bash aws/teardown.sh` her şeyi siler, S3'teki veriyi bırakır.
+
 ## Kullanım
 
-Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yalnızca bir süreç kullanabilir. İkisi de Ctrl+C ile durdurulur.
+Canlı ve geçmişi aynı anda çalıştırmayın. İkisi aynı dosyaya yazar ve aynı bildirimi iki kez ekleyebilir. İkisi de Ctrl+C ile durdurulur.
 
 ### Canlı
 
@@ -47,7 +88,7 @@ Canlı ve geçmiş aynı anda çalıştırılamaz. Veritabanını aynı anda yal
 python kap_watch.py
 ```
 
-KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
+KAP'ı beklemeden sürekli kontrol eder ve her yeni bildirimi hemen işler. Başladığı andan 10 dakika öncesine kadar yayımlananları da alır. Hata alan bir bildirim 5 dakika sonra yeniden denenir, en fazla 3 kez. Açık kaldığı sürece çalışır. Kapalı kaldığı aralığı sonradan geçmiş komutuyla doldurabilirsiniz.
 
 ### Geçmiş
 
@@ -55,35 +96,16 @@ KAP'ı 15 saniyede bir kontrol eder ve her yeni bildirimi hemen işler. Başlad�
 python kap_history.py --start 01.01.2025 --end 31.12.2025
 ```
 
-- **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Günler bitişten başlangıca doğru işlenir.
-- **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; tamamlananları atlar, kaldığı yerden devam eder. Hata alan sayfa ve ekler de o zaman yeniden denenir.
+- **Tarihler.** Tarihler `GG.AA.YYYY` biçimindedir ve iki gün de aralığa dahildir. Bildirimler yeniden eskiye doğru işlenir.
+- **Devam etme.** Durdurulursa aynı komutu yeniden çalıştırın; dosyada olan bildirimleri atlar, kaldığı yerden devam eder. Hata alan bildirimler de o zaman baştan denenir. Yarım kalan bir bildirimin (örneğin eki inmekte olan) sayfası da yeniden çekilir.
 - **Bitiş.** Aralık bitince kendiliğinden kapanır.
-- **Süre.** KAP'ın istek sınırı yüzünden yavaştır. Bir sayfa 5 ile 9 saniye sürer. İş günü başına yaklaşık 330 bildirim olduğu için bir gün yarım saat ile bir saat arası sürer. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
-
-### Bakım komutları
-
-| Komut | Ne yapar |
-|---|---|
-| `python kap_output.py` | JSON Lines dosyasını, detay dosyalarını ve Excel özetini veritabanından baştan yazar. KAP'a istek atmaz |
-| `python kap_details.py --reparse` | Saklı sayfaları KAP'a gitmeden yeniden ayrıştırır. Ayrıştırıcı değiştiğinde kullanılır |
-| `python kap_financials.py --all` | Saklı finansal raporlardan mali tabloları yeniden çıkarır |
-| `python kap_attachments.py` | Yarım kalan ekleri tamamlar |
-
-Yeniden ayrıştırmadan sonra JSON Lines dosyasını güncellemek için `python kap_output.py` komutunu çalıştırın.
+- **Süre.** Liste ay ay, tek istekte çekilir. Asıl süreyi sayfalar ve ekler alır. Eylül 2026'da listedeki şirketlerle ilgili 1.210 bildirim vardı. 12 işçi aynı anda çalışır; bazıları yavaş inen ekleri beklerken diğerleri sayfalara devam eder. Uzun aralıkları birkaç güne bölerek çalıştırabilirsiniz.
 
 ## Çıktılar
 
-Hepsi `data/` klasöründedir:
+Tek çıktı `data/disclosures.jsonl` dosyasıdır (**eğitim verisi**). Her satır bir bildirimin tam kaydıdır.
 
-| Dosya | İçerik |
-|---|---|
-| `disclosures.jsonl` | **Eğitim verisi.** Her satır bir bildirimin tam kaydıdır |
-| `kap.duckdb` | Her şeyin tutulduğu veritabanı, ham sayfa HTML'leri dahil |
-| `json/YYYY-AA-GG/` | Her bildirim için ayrı bir JSON dosyası. Canlıda saniyeler içinde hazır olur |
-| `details/YYYY-AA-GG/` | Her bildirim için göz atmaya uygun bir Markdown dosyası |
-| `disclosures.xlsx` | En yeni 5.000 bildirimin Excel özeti. Detay dosyalarına bağlantı içerir |
-
-Bir bildirim, sayfası okunup ekleri de okunduğunda ya da atlandığında JSON Lines dosyasına bir kez eklenir. Okuma örneği: `pl.read_ndjson("data/disclosures.jsonl")`.
+Bir bildirim, sayfası ve ekleri okunduğunda dosyaya bir kez eklenir. Satırlar yayın sırasına göre değil, işin bittiği sıraya göre dizilir. Okuma örneği: `[json.loads(line) for line in open("data/disclosures.jsonl", encoding="utf-8")]`.
 
 Bir kaydın alanları:
 
@@ -93,40 +115,52 @@ Bir kaydın alanları:
 | `publish_date`, `stock_code`, `company_title` | Yayın zamanı, hisse kodu, şirket |
 | `title`, `summary` | Bildirim türü, örneğin "Özel Durum Açıklaması (Genel)", ve özeti |
 | `disclosure_class` | `ODA` özel durum açıklaması, `FR` finansal rapor, `DUY` duyuru, `DG` diğer |
+| `related_disclosure_oid` | Bu bildirimin devamı, güncellemesi ya da düzeltmesi olduğu önceki bildirimin `disclosure_id` değeri |
+| `is_changed` | Güncellenen bildirimde `DUZENLENEN`, düzeltilen bildirimde `DUZELTILEN`, ilk bildirimde boş |
+| `mkk_member_oid` | KAP'ın şirket kimliği. Hisse kodu değişse de aynı kalır |
+| `term`, `has_multi_language_support` | Finansal raporun çeyreği; bildirimin İngilizcesi de varsa `Y` |
 | `text` | Sayfanın tam metni |
-| `fields`, `tables` | Sayfadaki etiket-değer alanları ve tablolar |
+| `fields`, `tables` | Sayfadaki etiket-değer alanları ve tablolar. Finansal raporlarda `fields` boştur, çünkü sayfadaki alanların hepsi `financial_statements` içinde vardır |
 | `financial_statements` | Finansal raporların mali tabloları. Her değerin XBRL kavramı, dönemi ve para birimi vardır |
-| `attachments` | Ekler: adı, bağlantısı ve okunduysa `text` ile `tables`. Atlanan eklerde `file_type` `skipped` olur, `text` boştur |
+| `attachments` | Ekler: adı, bağlantısı, `text` ile `tables`. Türkçesi olan bir belgenin İngilizcesinde `file_type` `skipped`, okunamayan dosya türlerinde `unsupported` olur; ikisinde de `text` boştur |
+
+## Şirket listesi
+
+Bildirimleri toplanan şirketler `companies.txt` dosyasındadır, sektörlere göre gruplanmış hâlde. Her satırın ilk kelimesi bir hisse kodudur, gerisi açıklamadır. `#` ile başlayan satırlar, sektör başlıkları dahil, okunmaz.
+
+Bir bildirim iki durumda alınır:
+
+- Listedeki bir şirketin kendi bildirimiyse.
+- Başka bir kurumun bildirimi listedeki bir şirketi "ilgili hisse" olarak anıyorsa. Örneğin Borsa İstanbul'un devre kesici bildirimleri, Takasbank duyuruları ve derecelendirme kuruluşlarının kredi notları.
+
+Kodu değişen şirketlerin eski kodları da listede durmalıdır. KAP, şirketin kendi bildirimlerinde eski tarihli olsalar bile güncel kodu verir. Başka kurumların bildirimlerinde ise o günkü kod yazar. Örneğin Türk Altın (TRALT), eski bildirimlerde KOZAL olarak geçer.
+
+Listeye şirket eklerseniz geçmiş komutunu yeniden çalıştırmanız yeterlidir. Listeler her çalıştırmada KAP'tan yeniden alındığı için yeni şirketlerin bildirimleri de çekilir. Listeden çıkarılan şirketlerin toplanmış bildirimleri silinmez.
 
 ## Hangi ekler okunur
 
-Eklerin çoğu ya sayfada zaten yazılanın resmî belgesidir ya da faaliyet raporu gibi uzun, rutin raporlardır. Bu yüzden ekler sadece şu bildirim türlerinde okunur:
-
-- **Özel Durum Açıklaması (Genel):** yatırımcı sunumları, finansal sonuç notları, beklenti güncellemeleri
-- **Kredi Derecelendirmesi**
-- **Değerleme Raporu**
-- **Halka arz fiyatının varsayımlarına ilişkin rapor**
-- **Fon kullanım raporu**
-
-Bu türlerde de, aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi indirilmez. Dil, dosya adından tahmin edilir; emin olunamazsa ek okunur. Listeyi değiştirmek için `kap_attachments.py` içindeki `EXTRACT_TYPES` sabitini düzenleyin.
+Her bildirimin bütün ekleri, türüne bakılmadan indirilip okunur. Yalnızca aynı bildirimde Türkçesi bulunan bir belgenin İngilizcesi indirilmez. Dil, dosya adından tahmin edilir; emin olunamazsa ya da bildirimin bütün ekleri İngilizceyse ek okunur. PDF'lerin metni ve tabloları, taranmış sayfalar ve resimler OCR ile çıkarılır. PDF ya da resim olmayan dosyalar (ör. Excel, Word) `unsupported` olarak kaydedilir.
 
 ## Dosyalar
 
 ```text
-kap_watch.py          Canlı izleyici
+companies.txt         Bildirimleri toplanan şirketler
+kap_watch.py          Canlı izleyici; bir bildirimi baştan sona işleyen ortak kod da burada
 kap_history.py        Tarih aralığındaki geçmiş bildirimler
+kap_aws.py            AWS'de geçmiş: kap_history.py'nin işini yapar, sonuçları S3'e yazar
+aws/                  AWS kurulumu, çalıştırma ve durdurma betikleri, squid proxy imajı
 kap_disclosures.py    Bildirim listesini çeker
 kap_details.py        Bildirim sayfasını çeker ve ayrıştırır
 kap_financials.py     Finansal raporlardan mali tabloları çıkarır
-kap_attachments.py    Hangi eklerin okunacağına karar verir, ekleri indirir, metin çıkarır, OCR yapar
-kap_output.py         Veritabanı yolu ve tüm çıktı dosyaları (JSON Lines, JSON, Markdown, Excel)
+kap_attachments.py    Eklerden metin ve tablo çıkarır, OCR yapar
+kap_output.py         Bildirimin kaydını kurar ve JSON Lines dosyasına yazar
 kap_http.py           KAP'ın istek sınırına karşı bekleme ve yeniden deneme
 ```
 
 ## Bilinmesi gerekenler
 
-- **İstek sınırı.** KAP birkaç dakikada yaklaşık 100 istekten sonra geçici olarak engeller. Betikler bunu bekleyip kendiliğinden devam eder. Ekranda sık sık `KAP rate limit hit` görürseniz `kap_history.py` içindeki `REQUEST_DELAY` değerini artırın.
-- **Yavaş indirmeler.** KAP ekleri bazen çok yavaş verir. 180 saniyede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
-- **Kilit hatası.** `Could not set lock on file ... kap.duckdb` hatası, veritabanının başka bir süreçte açık olduğunu gösterir. Önce o süreci durdurun.
+- **İstek sınırı.** KAP çok fazla istek gönderen IP'yi geçici olarak engeller. Engeli bazen HTTP 429 ile bildirir, bazen de bağlantıları hiç yanıt vermeden keser. Geçmiş komutu 12, canlı izleyici 4 işçiyle çalışır. KAP birkaç dakikada ~100 istekten sonra IP'yi birkaç dakikalığına engeller. İstekler arasında bekleme yoktur; engel ne kadar seyrek istekte de gelir. Engel olunca (HTTP 429, 403, 503 ya da yanıtsız kesilen bağlantı) herkes 4 dakika bekler, sonra devam eder. Hata alan diğer istekler beklemeden en fazla 5 kez denenir. İşçi sayıları `kap_history.py` ve `kap_watch.py` içindeki `WORKERS` değerleridir.
+- **Yavaş indirmeler.** KAP ekleri her bağlantıya saniyede yaklaşık 10-15 KB ile verir. Bu yüzden her ekin indirilmesine boyutuna göre süre tanınır: en az 180 saniye, büyük dosyalarda saniyede 4 KB'a göre gereken süre. Örneğin bir bankanın 4,7 MB'lık finansal raporuna yaklaşık 19 dakika tanınır. KAP bazen dosyanın ortasında veri göndermeyi bırakır. 30 saniye hiç veri gelmezse indirme kesilip baştan denenir. Bu sürede inmeyen ek bir sonraki çalıştırmada yeniden denenir. Eki inmeyen bildirim o zamana kadar JSON Lines dosyasına girmez.
+- **Yeniden ayrıştırma yok.** Ham sayfalar saklanmaz. Ayrıştırıcı değişirse eski satırlar kendiliğinden yenilenmez; o bildirimlerin KAP'tan yeniden çekilmesi gerekir.
 - **Türkçe karakterler bozuksa** PowerShell'de `$env:PYTHONIOENCODING = "utf-8"` ayarlayın.
 - **KAP değişebilir.** Ayrıştırıcılar KAP'ın Ekim 2026'daki sayfa düzenine göre yazıldı.

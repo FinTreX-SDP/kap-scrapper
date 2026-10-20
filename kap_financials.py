@@ -1,41 +1,11 @@
 """Turn the XBRL-tagged financial statements on KAP financial report pages into numeric, period-based rows.
 
-Reads the disclosure HTML already stored by kap_details.py or kap_watch.py; sends no requests to KAP.
-kap_watch.py also calls this right after it saves a new financial report.
-
-Usage:
-    python kap_financials.py         # stored reports that have no rows yet
-    python kap_financials.py --all   # re-parse every stored report (after a parser change)
+Reads the disclosure body parsed by kap_details.py; sends no requests to KAP.
 """
-import argparse
 import re
 from datetime import date, datetime
 
-import duckdb
-import polars as pl
 from selectolax.lexbor import LexborHTMLParser, LexborNode
-
-from kap_output import DB_PATH, export_to_excel, write_detail_file
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS financial_items (
-    disclosure_index INTEGER,
-    statement VARCHAR,        -- e.g. 'Finansal Durum Tablosu (Bilanço)'
-    row_no INTEGER,           -- position within the statement, keeps the original order
-    concept VARCHAR,          -- XBRL concept, e.g. 'ifrs-full_Revenue'
-    label VARCHAR,
-    member VARCHAR,           -- equity component in the statement of changes in equity, else NULL
-    period_label VARCHAR,     -- e.g. 'Cari Dönem', 'Önceki Dönem 3 Aylık'
-    period_start DATE,        -- NULL for a point in time, e.g. a balance sheet date
-    period_end DATE,
-    value DOUBLE,
-    currency VARCHAR,
-    consolidation VARCHAR     -- 'Konsolide' or 'Konsolide Olmayan'
-);
-"""
-ROW_SCHEMA = {"disclosure_index": pl.Int32, "statement": pl.String, "row_no": pl.Int32, "concept": pl.String,
-              "label": pl.String, "member": pl.String, "period_label": pl.String, "period_start": pl.Date,
-              "period_end": pl.Date, "value": pl.Float64, "currency": pl.String, "consolidation": pl.String}
 
 PERIOD_RE = re.compile(r"^(.*?)\s*(\d{2}\.\d{2}\.\d{4})(?:\s*-\s*(\d{2}\.\d{2}\.\d{4}))?$")
 # Turkish format 1.234.567,89; thousands groups must have 3 digits, so dates like 01.09.2026 do not match.
@@ -146,43 +116,3 @@ def parse_financials(html: str) -> list[dict]:
     consolidation = header_value(tree, "Finansal Tablo Niteliği")
     return [{**item, "currency": currency, "consolidation": consolidation}
             for table in tree.css("table.financial-table") for item in parse_statement(table)]
-
-
-def save(con: duckdb.DuckDBPyConnection, disclosure_index: int, items: list[dict]) -> None:
-    con.begin()  # all or nothing; replaces earlier rows of the same report
-    try:
-        con.execute("DELETE FROM financial_items WHERE disclosure_index = ?", [disclosure_index])
-        if items:
-            df = pl.DataFrame([{"disclosure_index": disclosure_index, **i} for i in items], schema=ROW_SCHEMA)
-            con.execute("INSERT INTO financial_items BY NAME SELECT * FROM df")
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract financial statements from stored KAP reports.")
-    parser.add_argument("--all", action="store_true", help="re-parse every stored report")
-    args = parser.parse_args()
-
-    con = duckdb.connect(str(DB_PATH))
-    con.execute(SCHEMA)
-    # Other forms reuse the same table layout, so only financial report disclosures (class FR) are read.
-    query = """
-        SELECT x.disclosure_index, x.html FROM disclosure_details x JOIN disclosures d USING (disclosure_index)
-        WHERE d.disclosure_class = 'FR' AND x.html LIKE '%financial-table%'
-    """
-    if not args.all:
-        query += " AND x.disclosure_index NOT IN (SELECT disclosure_index FROM financial_items)"
-    for disclosure_index, html in con.execute(query).fetchall():
-        items = parse_financials(html)
-        save(con, disclosure_index, items)
-        write_detail_file(con, disclosure_index)
-        print(f"{disclosure_index}: {len(items)} values")
-    export_to_excel(con)
-    con.close()
-
-
-if __name__ == "__main__":
-    main()

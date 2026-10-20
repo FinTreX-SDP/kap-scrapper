@@ -1,0 +1,134 @@
+# Companies whose KAP disclosures are collected, one per line, stock code first, grouped by sector.
+# A disclosure is collected when one of these codes is its stock code or one of its related stocks.
+# Lines starting with # are ignored.
+
+# Bankacılık
+AKBNK   - Akbank T.A.Ş.
+GARAN   - Türkiye Garanti Bankası A.Ş.
+ISCTR   - Türkiye İş Bankası A.Ş. (C)
+YKBNK   - Yapı ve Kredi Bankası A.Ş.
+VAKBN   - Türkiye Vakıflar Bankası T.A.O.
+HALKB   - Türkiye Halk Bankası A.Ş.
+TSKB    - Türkiye Sınai Kalkınma Bankası A.Ş.
+ALBRK   - Albaraka Türk Katılım Bankası A.Ş.
+
+# Sigorta ve aracı kurum
+TURSG   - Türkiye Sigorta A.Ş.
+ANSGR   - Anadolu Anonim Türk Sigorta Şirketi
+ANHYT   - Anadolu Hayat Emeklilik A.Ş.
+ISMEN   - İş Yatırım Menkul Değerler A.Ş.
+
+# Holding ve yatırım
+KCHOL   - Koç Holding A.Ş.
+SAHOL   - Hacı Ömer Sabancı Holding A.Ş.
+ALARK   - Alarko Holding A.Ş.
+AGHOL   - AG Anadolu Grubu Holding A.Ş.
+DOHOL   - Doğan Şirketler Grubu Holding A.Ş.
+TKFEN   - Tekfen Holding A.Ş.
+BERA    - Bera Holding A.Ş.
+ECZYT   - Eczacıbaşı Yatırım Holding Ortaklığı A.Ş.
+GLYHO   - Global Yatırım Holding A.Ş.
+BRYAT   - Borusan Yatırım ve Pazarlama A.Ş.
+
+# Bilişim ve yazılım
+LOGO    - Logo Yazılım Sanayi ve Ticaret A.Ş.
+MIATK   - Mia Teknoloji A.Ş.
+ARDYZ   - ARD Grup Bilişim Teknolojileri A.Ş.
+
+# Demir, çelik ve boru
+EREGL   - Ereğli Demir ve Çelik Fabrikaları T.A.Ş.
+KRDMD   - Kardemir Karabük Demir Çelik Sanayi ve Ticaret A.Ş. (D)
+ISDMR   - İskenderun Demir ve Çelik A.Ş.
+CEMTS   - Çemtaş Çelik Makina Sanayi ve Ticaret A.Ş.
+BRSAN   - Borusan Birleşik Boru Fabrikaları San. ve Tic. A.Ş.
+
+# İnşaat ve yapı malzemeleri
+ENKAI   - Enka İnşaat ve Sanayi A.Ş.
+SISE    - Türkiye Şişe ve Cam Fabrikaları A.Ş.
+CIMSA   - Çimsa Çimento Sanayi ve Ticaret A.Ş.
+AKCNS   - Akçansa Çimento Sanayi ve Ticaret A.Ş.
+OYAKC   - Oyak Çimento Fabrikaları A.Ş.
+BTCIM   - Batıçim Batı Anadolu Çimento Sanayii A.Ş.
+NUHCM   - Nuh Çimento Sanayi A.Ş.
+
+# GYO
+EKGYO   - Emlak Konut Gayrimenkul Yatırım Ortaklığı A.Ş.
+TRGYO   - Torunlar Gayrimenkul Yatırım Ortaklığı A.Ş.
+SNGYO   - Sinpaş Gayrimenkul Yatırım Ortaklığı A.Ş.
+ISGYO   - İş Gayrimenkul Yatırım Ortaklığı A.Ş.
+ALGYO   - Alarko Gayrimenkul Yatırım Ortaklığı A.Ş.
+
+# Otomotiv ve yan sanayi
+FROTO   - Ford Otomotiv Sanayi A.Ş.
+TOASO   - Tofaş Türk Otomobil Fabrikası A.Ş.
+DOAS    - Doğuş Otomotiv Servis ve Ticaret A.Ş.
+TTRAK   - Türk Traktör ve Ziraat Makineleri A.Ş.
+OTKAR   - Otokar Otomotiv ve Savunma Sanayi A.Ş.
+KARSN   - Karsan Otomotiv Sanayii ve Ticaret A.Ş.
+EGEEN   - Ege Endüstri ve Ticaret A.Ş.
+BRISA   - Brisa Bridgestone Sabancı Lastik Sanayi ve Ticaret A.Ş.
+GOODY   - Goodyear Lastikleri T.A.Ş.
+JANTS   - Jantsa Jant Sanayi ve Ticaret A.Ş.
+
+# Dayanıklı tüketim
+ARCLK   - Arçelik A.Ş.
+VESTL   - Vestel Elektronik Sanayi ve Ticaret A.Ş.
+VESBE   - Vestel Beyaz Eşya Sanayi ve Ticaret A.Ş.
+
+# Enerji
+ENJSA   - Enerjisa Enerji A.Ş.
+AKSEN   - Aksa Enerji Üretim A.Ş.
+AYGAZ   - Aygaz A.Ş.
+ODAS    - Odaş Elektrik Üretim Sanayi Ticaret A.Ş.
+ZOREN   - Zorlu Enerji Elektrik Üretim A.Ş.
+GWIND   - Galata Wind Enerji A.Ş.
+CANTE   - Çan2 Termik A.Ş.
+GESAN   - Girişim Elektrik Sanayi Taahhüt ve Ticaret A.Ş.
+AYEN    - Ayen Enerji A.Ş.
+AKENR   - Akenerji Elektrik Üretim A.Ş.
+
+# Petrokimya ve endüstri
+TUPRS   - Türkiye Petrol Rafinerileri A.Ş. (Tüpraş)
+PETKM   - Petkim Petrokimya Holding A.Ş.
+SASA    - SASA Polyester Sanayi A.Ş.
+AKSA    - Aksa Akrilik Kimya Sanayii A.Ş.
+KORDS   - Kordsa Teknik Tekstil A.Ş.
+
+# Tarım ve gübre
+GUBRF   - Gübre Fabrikaları T.A.Ş.
+HEKTS   - Hektaş Ticaret T.A.Ş.
+EGGUB   - Ege Gübre Sanayii A.Ş.
+
+# Gıda ve içecek
+CCOLA   - Coca-Cola İçecek A.Ş.
+AEFES   - Anadolu Efes Biracılık ve Malt Sanayii A.Ş.
+ULKER   - Ülker Bisküvi Sanayi A.Ş.
+TUKAS   - Tukaş Gıda Sanayi ve Ticaret A.Ş.
+TATGD   - Tat Gıda Sanayi A.Ş.
+
+# Perakende
+BIMAS   - Bim Birleşik Mağazalar A.Ş.
+MGROS   - Migros Ticaret A.Ş.
+SOKM    - Şok Marketler Ticaret A.Ş.
+MAVI    - Mavi Giyim Sanayi ve Ticaret A.Ş.
+
+# Havacılık ve lojistik
+THYAO   - Türk Hava Yolları A.O.
+PGSUS   - Pegasus Hava Taşımacılığı A.Ş.
+TAVHL   - TAV Havalimanları Holding A.Ş.
+RYSAS   - Reysaş Taşımacılık ve Lojistik Ticaret A.Ş.
+CLEBI   - Çelebi Hava Servisi A.Ş.
+
+# Savunma ve makine
+ASELS   - Aselsan Elektronik Sanayi ve Ticaret A.Ş.
+KATMR   - Katmerciler Araç Üstü Ekipman Sanayi ve Ticaret A.Ş.
+
+# Telekomünikasyon
+TCELL   - Turkcell İletişim Hizmetleri A.Ş.
+TTKOM   - Türk Telekomünikasyon A.Ş.
+
+# Sağlık ve ilaç
+MPARK   - MLP Sağlık Hizmetleri A.Ş.
+ECILC   - Eczacıbaşı İlaç Sınai ve Finansal Yatırımlar San. ve Tic. A.Ş.
+SELEC   - Selçuk Ecza Deposu Ticaret ve Sanayi A.Ş.
+DEVA    - Deva Holding A.Ş.
