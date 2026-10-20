@@ -16,6 +16,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 
 import httpx
@@ -42,6 +43,14 @@ def log(message: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
 
 
+def extract_apart(data: bytes) -> dict:
+    """kap_attachments.extract() in a process of its own. Some files crash PyMuPDF, OpenCV or Tesseract, which
+    Python cannot catch (on 19.10.2026 one killed a scraper twice at the same place); this way only that
+    process dies, raising BrokenProcessPool here. All memory the file took goes back when the process ends."""
+    with ProcessPoolExecutor(max_workers=1) as process:
+        return process.submit(kap_attachments.extract, data).result()
+
+
 def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclosure) -> dict:
     """Fetch a disclosure's page, its financial statements if it is a financial report, and all of its
     attachments but English copies of Turkish ones, and return its record. `file_client` is for the
@@ -56,8 +65,8 @@ def fetch_disclosure(client: httpx.Client, file_client: httpx.Client, d: Disclos
         data = kap_get(file_client, a["url"])  # a failed download fails the disclosure, so it is tried again
         try:
             with extracting:
-                texts[file_id] = result = kap_attachments.extract(data)
-        except Exception as e:  # a file that cannot be read would fail every time; record it as such instead
+                texts[file_id] = result = extract_apart(data)
+        except Exception as e:  # a file that cannot be read, or crashes the reader, would fail every time
             texts[file_id] = result = unreadable(e)
             log(f"  attachment {d.disclosureIndex} '{a['file_name']}' could not be read: {e!r}")
             continue

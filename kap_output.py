@@ -67,7 +67,9 @@ def as_json(record: dict) -> str:
 def append_record(record: dict) -> None:
     """Add a disclosure to the JSON Lines file. Safe to call from several threads."""
     line = as_json(record) + "\n"
-    with _write_lock, JSONL_PATH.open("a", encoding="utf-8") as f:
+    # A PDF's text may hold half of a surrogate pair, which UTF-8 cannot store (1520947 failed every time);
+    # it becomes "?".
+    with _write_lock, JSONL_PATH.open("a", encoding="utf-8", errors="replace") as f:
         f.write(line)
 
 
