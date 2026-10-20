@@ -17,6 +17,9 @@ JSONL_PATH = DATA_DIR / "disclosures.jsonl"
 STATEMENT_KEYS = ("statement", "currency", "consolidation")
 ITEM_KEYS = ("concept", "label", "member", "period_label", "period_start", "period_end", "value")
 TEXT_KEYS = ("file_type", "page_count", "ocr_pages", "skipped_pages", "text")
+# Only when there is something to say: why a file could not be read, and, for a PDF read page by page after
+# it crashed the reader, the pages whose tables (table_errors) or whole page (unread_pages) could not be read.
+NOTE_KEYS = ("error", "table_errors", "unread_pages")
 SKIPPED = {"file_type": "skipped", "page_count": 0, "ocr_pages": 0, "skipped_pages": 0, "text": "", "tables": []}
 INDEX_RE = re.compile(r'\{"disclosure_index": (\d+)')  # the first key of every line
 
@@ -43,9 +46,9 @@ def disclosure_record(listed: dict, page: dict, financial_items: list[dict], tex
         result = texts.get(file_id, SKIPPED)
         attachments.append({"file_id": file_id, "file_name": a["file_name"], "url": a["url"],
                             **{k: result[k] for k in TEXT_KEYS},
-                            **({"error": result["error"]} if "error" in result else {}),
                             "tables": [{"page": page_no, "method": method, "rows": rows}
-                                       for page_no, method, rows in result["tables"] if rows]})
+                                       for page_no, method, rows in result["tables"] if rows],
+                            **{k: result[k] for k in NOTE_KEYS if result.get(k)}})
     # A financial report's fields are its statements, so they are left out to avoid storing them twice.
     return listed | {"page_format": page["page_format"], "fields": [] if financial_items else page["fields"],
                      "tables": page["tables"], "financial_statements": statements, "attachments": attachments,

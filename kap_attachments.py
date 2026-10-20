@@ -1,9 +1,9 @@
 """Extract the text and tables of disclosure attachments, and decide which attachments are worth reading.
 
-Text comes from the PDF text layer, or OCR for scanned pages and images. Tables come from the text layer
-(PyMuPDF table finder) or, on scans, from ruled grid lines whose cells are OCR'd one by one.
-Files are processed in memory and never saved. Every attachment of every disclosure is read, except the
-English version of a document that also comes in Turkish.
+Text comes from the PDF text layer, or OCR for scanned pages and images; every scanned page is OCR'd.
+Tables come from the text layer (PyMuPDF table finder) or, on scans, from ruled grid lines whose cells are
+OCR'd one by one. Files are processed in memory and never saved. Every attachment of every disclosure is
+read, except the English version of a document that also comes in Turkish.
 """
 import io
 import os
@@ -27,7 +27,6 @@ pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
 OCR_LANG = "tur"
 OCR_DPI = 300
 MIN_TEXT_CHARS = 50  # a page with less text than this is treated as scanned
-MAX_OCR_PAGES = 50  # OCR takes ~6 s per page; pages beyond this are counted as skipped
 MIN_CELL_SIZE = 20  # px at OCR_DPI; smaller enclosed gaps are line noise, not cells
 MIN_TABLE_CELLS = 4  # fewer enclosed cells is a framed box or underline, not a table
 ROW_TOLERANCE = 15  # px; cells whose tops are this close belong to the same row
@@ -86,27 +85,36 @@ def ocr_page(image: Image.Image) -> tuple[str, list[list[list[str]]]]:
     return ocr(image), [ocr_table(img, cells) for cells in find_grid_tables(img)]
 
 
+def read_page(page: pymupdf.Page, tables: bool = True) -> dict:
+    """One PDF page: its text (OCR'd if scanned) and, unless `tables` is false, its tables as (method, rows)."""
+    text = clean_text(page.get_text())
+    if len(text) < MIN_TEXT_CHARS and page.get_images():
+        pix = page.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY)
+        text, found = ocr_page(Image.frombytes("L", (pix.width, pix.height), pix.samples))
+        return {"text": text, "ocr": True, "tables": [("ocr", rows) for rows in found] if tables else []}
+    found = page.find_tables().tables if tables else []  # the table finder is what crashes on some pages
+    return {"text": text, "ocr": False,
+            "tables": [("text", [[clean_cell(c) for c in row] for row in t.extract()]) for t in found]}
+
+
+def read_file_page(path: str, page_no: int, tables: bool) -> dict:
+    """read_page() for page `page_no` (from 1) of the PDF at `path`, for reading a file page by page."""
+    with pymupdf.open(path) as doc:
+        return read_page(doc[page_no - 1], tables)
+
+
+def pdf_result(pages: list[dict]) -> dict:
+    """extract()'s result for a PDF from its pages read with read_page(); None for a page that could not be
+    read. skipped_pages stays in the records' layout, though no page is skipped any more."""
+    return {"file_type": "pdf", "page_count": len(pages), "ocr_pages": sum(1 for p in pages if p and p["ocr"]),
+            "skipped_pages": 0,
+            "text": "\n\n".join(f"[Page {n}]\n{p['text'] if p else ''}" for n, p in enumerate(pages, 1)),
+            "tables": [(n, method, rows) for n, p in enumerate(pages, 1) if p for method, rows in p["tables"]]}
+
+
 def extract_pdf(data: bytes) -> dict:
-    parts, tables, ocr_pages, skipped = [], [], 0, 0
     with pymupdf.open(stream=data, filetype="pdf") as doc:
-        for page in doc:
-            page_no = page.number + 1
-            text = clean_text(page.get_text())
-            if len(text) < MIN_TEXT_CHARS and page.get_images():
-                if ocr_pages < MAX_OCR_PAGES:
-                    pix = page.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY)
-                    text, page_tables = ocr_page(Image.frombytes("L", (pix.width, pix.height), pix.samples))
-                    tables += [(page_no, "ocr", rows) for rows in page_tables]
-                    ocr_pages += 1
-                else:
-                    skipped += 1
-            else:
-                tables += [(page_no, "text", [[clean_cell(c) for c in row] for row in t.extract()])
-                           for t in page.find_tables().tables]
-            parts.append(f"[Page {page_no}]\n{text}")
-        page_count = doc.page_count
-    return {"file_type": "pdf", "page_count": page_count, "ocr_pages": ocr_pages,
-            "skipped_pages": skipped, "text": "\n\n".join(parts), "tables": tables}
+        return pdf_result([read_page(page) for page in doc])
 
 
 def unwrap(data: bytes) -> bytes:

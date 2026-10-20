@@ -21,7 +21,7 @@ import httpx
 from kap_disclosures import DATE_FORMAT, HEADERS, Disclosure, fetch_list, months
 from kap_http import connection_options, gate
 from kap_output import DATA_DIR, JSONL_PATH, append_record, stop_writing, written_indexes
-from kap_watch import fetch_disclosure, log, start_workers
+from kap_pipeline import fetch_disclosure, log, start_workers
 
 # The workers overlap KAP's slow answers: a page takes 0.4-9 s to come, an attachment several minutes
 # at ~10 KB/s per connection.
